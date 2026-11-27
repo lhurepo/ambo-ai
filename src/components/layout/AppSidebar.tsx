@@ -10,10 +10,12 @@ import {
   LogOut,
   Menu,
   Plus,
+  Power,
   RefreshCw,
   User,
   X,
 } from "lucide-react";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { UpdateAppModal } from "./UpdateAppModal";
 
 interface AppSidebarProps {
@@ -28,6 +30,9 @@ export function AppSidebar({ onNewSermon }: AppSidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [updatesAvailable, setUpdatesAvailable] = useState(0);
+  const [shutdownModalOpen, setShutdownModalOpen] = useState(false);
+  const [shuttingDown, setShuttingDown] = useState(false);
+  const [isShutDown, setIsShutDown] = useState(false);
 
   useEffect(() => {
     fetch("/api/system/update")
@@ -48,6 +53,19 @@ export function AppSidebar({ onNewSermon }: AppSidebarProps) {
     });
     router.push("/signin");
     router.refresh();
+  };
+
+  const handleShutdown = async () => {
+    setShuttingDown(true);
+    try {
+      await fetch("/api/system/shutdown", { method: "POST" });
+    } catch {
+      // Server may close the socket right as it exits
+    } finally {
+      setShuttingDown(false);
+      setShutdownModalOpen(false);
+      setIsShutDown(true);
+    }
   };
 
   const navItems = [
@@ -151,6 +169,18 @@ export function AppSidebar({ onNewSermon }: AppSidebarProps) {
 
         <button
           type="button"
+          onClick={() => {
+            setMobileOpen(false);
+            setShutdownModalOpen(true);
+          }}
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-[#4E6470] transition hover:bg-rose-50 hover:text-rose-700"
+        >
+          <Power className="h-4 w-4 shrink-0 text-[#70848F]" aria-hidden="true" />
+          Shut down app
+        </button>
+
+        <button
+          type="button"
           onClick={handleLogout}
           className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-[#4E6470] transition hover:bg-[#F3F5F7] hover:text-[#0D1F28]"
         >
@@ -214,6 +244,37 @@ export function AppSidebar({ onNewSermon }: AppSidebarProps) {
         onClose={() => setUpdateModalOpen(false)}
         onStatusChecked={(count) => setUpdatesAvailable(count)}
       />
+
+      <ConfirmModal
+        open={shutdownModalOpen}
+        title="Shut down Ambo AI?"
+        description="This stops the local Ambo AI server on your Mac so it is no longer running in the background. Double-click Ambo AI on your Desktop anytime to start it again."
+        confirmLabel="Shut down"
+        variant="danger"
+        loading={shuttingDown}
+        onConfirm={handleShutdown}
+        onCancel={() => setShutdownModalOpen(false)}
+      />
+
+      {isShutDown && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-[#F7F8FA] p-6"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-[#E5EAEF] bg-white p-8 text-center shadow-sm">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#EBF4F7] text-[#002A3C]">
+              <Power className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <h2 className="text-lg font-semibold text-[#0D1F28]">Ambo AI has been shut down</h2>
+            <p className="mt-2 text-sm leading-relaxed text-[#4E6470]">
+              The local server is no longer running in the background. You can safely close this
+              browser tab, and double-click <strong>Ambo AI</strong> on your Desktop whenever you
+              want to open it again.
+            </p>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -50,7 +50,7 @@ open .
 2. **First time only (macOS security prompt):** Right-click **`Start Ambo AI.command`** → click **Open** → click **Open**.
 3. Right-click **`Start Ambo AI.command`** → click **Make Alias** → drag the alias onto your **Desktop** (you can rename it to **Ambo AI**).
 
-From now on, just **double-click Ambo AI on your Desktop** — it starts privately in the background and opens in your browser.
+From now on, just **double-click Ambo AI on your Desktop** — it starts privately in the background and opens in your browser. When you're done, click **Shut down app** in the bottom-left sidebar to stop it completely.
 
 ---
 
