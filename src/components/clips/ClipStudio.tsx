@@ -9,6 +9,7 @@ import {
   Edit3,
   Film,
   FolderOpen,
+  Image as ImageIcon,
   Loader2,
   Pause,
   Play,
@@ -28,8 +29,15 @@ import {
   type CaptionSize,
   type FaceTrackData,
   type TranscriptSegment,
+  type WatermarkPosition,
 } from "@/lib/types";
-import { downloadMediaEndpoint, revealPathInFinder } from "@/lib/client-download";
+import {
+  downloadMediaEndpoint,
+  fetchExportPreferences,
+  revealPathInFinder,
+  saveBlobWithMode,
+} from "@/lib/client-download";
+import { WaveformScrubber } from "@/components/clips/WaveformScrubber";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { useToast } from "@/components/ui/ToastProvider";
 
@@ -152,6 +160,13 @@ export function ClipStudio({
   } | null>(null);
   const [savingWord, setSavingWord] = useState(false);
 
+  // Batch selection & Cover JPG state
+  const [batchSelectedIds, setBatchSelectedIds] = useState<string[]>([]);
+  const [batchExporting, setBatchExporting] = useState(false);
+  const [coverLoading, setCoverLoading] = useState(false);
+  const [startDraft, setStartDraft] = useState("0");
+  const [endDraft, setEndDraft] = useState("30");
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playTimeSec, setPlayTimeSec] = useState(0);
@@ -170,8 +185,13 @@ export function ClipStudio({
         ...(activeClip.captionSettings || {}),
         showCaptions: activeClip.captionSettings?.showCaptions ?? true,
         uppercase: activeClip.captionSettings?.uppercase ?? false,
+        showWatermark: activeClip.captionSettings?.showWatermark ?? false,
+        watermarkPosition: activeClip.captionSettings?.watermarkPosition ?? "top-right",
+        showOutroBumper: activeClip.captionSettings?.showOutroBumper ?? false,
       });
       setTitleDraft(activeClip.title);
+      setStartDraft((activeClip.startMs / 1000).toFixed(1));
+      setEndDraft((activeClip.endMs / 1000).toFixed(1));
       setPlayTimeSec(activeClip.startMs / 1000);
       setEditingWord(null);
       setSavedNotice(null);
@@ -181,7 +201,7 @@ export function ClipStudio({
         setIsPlaying(false);
       }
     }
-  }, [activeClip?.id]);
+  }, [activeClip?.id, activeClip?.startMs, activeClip?.endMs]);
 
   useEffect(() => {
     let raf = 0;
@@ -397,6 +417,88 @@ export function ClipStudio({
     }
   };
 
+  const handleBatchExportSelected = async () => {
+    if (batchSelectedIds.length === 0) return;
+    setBatchExporting(true);
+    setSavedNotice(null);
+    try {
+      const prefs = await fetchExportPreferences();
+      const saveToDisk = prefs.exportMode === "folder" && Boolean(prefs.mediaExportDir);
+      const res = await fetch(`/api/sermons/${sermonId}/clips/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clipIds: batchSelectedIds,
+          includeThumbnails: true,
+          saveToDisk,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Batch export failed.");
+      }
+      onClipsChanged();
+      if (saveToDisk) {
+        const saved = await res.json();
+        setSavedNotice({ savedPath: saved.savedPath, displayPath: saved.displayPath });
+        return;
+      }
+      const blob = await res.blob();
+      await saveBlobWithMode({
+        blob,
+        fileName: `selected-clips-${batchSelectedIds.length}.zip`,
+        mimeType: "application/zip",
+        exportMode: prefs.exportMode,
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Batch export failed.");
+    } finally {
+      setBatchExporting(false);
+    }
+  };
+
+  const handleDownloadCover = async () => {
+    if (!activeClip) return;
+    setCoverLoading(true);
+    setSavedNotice(null);
+    try {
+      await downloadMediaEndpoint({
+        endpointUrl: `/api/clips/${activeClip.id}/thumbnail?refresh=1`,
+        fileName: `${activeClip.title}-cover.jpg`,
+        mimeType: "image/jpeg",
+        onSavedToFolder: (info) => setSavedNotice(info),
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Cover image failed.");
+    } finally {
+      setCoverLoading(false);
+    }
+  };
+
+  const handleTrimRange = async (nextStartMs: number, nextEndMs: number) => {
+    if (!activeClip) return;
+    const sMs = Math.max(0, Math.round(nextStartMs));
+    const eMs = Math.max(sMs + 1000, Math.round(nextEndMs));
+    setStartDraft((sMs / 1000).toFixed(1));
+    setEndDraft((eMs / 1000).toFixed(1));
+    await fetch(`/api/clips/${activeClip.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startMs: sMs, endMs: eMs }),
+    });
+    if (videoRef.current) {
+      videoRef.current.currentTime = sMs / 1000;
+    }
+    setPlayTimeSec(sMs / 1000);
+    onClipsChanged();
+  };
+
+  const toggleBatchSelect = (clipId: string) => {
+    setBatchSelectedIds((prev) =>
+      prev.includes(clipId) ? prev.filter((id) => id !== clipId) : [...prev, clipId]
+    );
+  };
+
   const filteredClips = clips.filter((c) => {
     if (catFilter === "All") return true;
     if (catFilter === "My Clips") return c.category === "userCreated";
@@ -473,14 +575,47 @@ export function ClipStudio({
             Find more clips
           </button>
           {clips.length > 0 && (
-            <button
-              type="button"
-              onClick={handleDownloadAllZip}
-              className="inline-flex items-center gap-1.5 rounded-full bg-[#002A3C] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#0B435B]"
-            >
-              <Download className="h-3.5 w-3.5" aria-hidden="true" />
-              Download all (.zip)
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const visibleIds = filteredClips.map((c) => c.id);
+                  const allVisibleSelected =
+                    visibleIds.length > 0 &&
+                    visibleIds.every((id) => batchSelectedIds.includes(id));
+                  setBatchSelectedIds(allVisibleSelected ? [] : visibleIds);
+                }}
+                className="rounded-full border border-[#D5E1E6] bg-white px-3 py-1.5 text-xs font-medium text-[#4E6470] hover:bg-[#F3F5F7] hover:text-[#0D1F28]"
+              >
+                {filteredClips.length > 0 &&
+                filteredClips.every((c) => batchSelectedIds.includes(c.id))
+                  ? "Clear selection"
+                  : "Select all"}
+              </button>
+              {batchSelectedIds.length > 0 && (
+                <button
+                  type="button"
+                  disabled={batchExporting}
+                  onClick={handleBatchExportSelected}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[#1D3519] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#274622] disabled:opacity-60"
+                >
+                  {batchExporting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5 text-[#BDD630]" aria-hidden="true" />
+                  )}
+                  Export selected ({batchSelectedIds.length})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleDownloadAllZip}
+                className="inline-flex items-center gap-1.5 rounded-full bg-[#002A3C] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#0B435B]"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                Download all (.zip)
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -528,9 +663,19 @@ export function ClipStudio({
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <span className="rounded-full border border-[#E5EAEF] bg-white px-2.5 py-0.5 text-[11px] font-medium text-[#002A3C]">
-                      {c.category === "userCreated" ? "My Clip" : c.category}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={batchSelectedIds.includes(c.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => toggleBatchSelect(c.id)}
+                        aria-label={`Select ${c.title} for batch export`}
+                        className="h-3.5 w-3.5 rounded accent-[#1D3519]"
+                      />
+                      <span className="rounded-full border border-[#E5EAEF] bg-white px-2.5 py-0.5 text-[11px] font-medium text-[#002A3C]">
+                        {c.category === "userCreated" ? "My Clip" : c.category}
+                      </span>
+                    </div>
                     <div className="flex items-center gap-1.5">
                       <span className="font-mono text-[11px] text-[#4E6470]">
                         {fmtMs(c.startMs)} – {fmtMs(c.endMs)}
@@ -614,6 +759,20 @@ export function ClipStudio({
                       <img src="/brand/garden/logo-mark-vine.png" alt="Garden Church" className="h-12 w-12 object-contain" />
                       <p className="mt-3 text-xs font-medium text-white/80">Audio Preview</p>
                     </div>
+                  )}
+
+                  {style.showWatermark && (
+                    <img
+                      src="/brand/garden/logo-mark-light.png"
+                      alt=""
+                      className={`pointer-events-none absolute h-6 w-6 object-contain opacity-80 ${
+                        style.watermarkPosition === "top-left"
+                          ? "left-3 top-3"
+                          : style.watermarkPosition === "bottom-right"
+                            ? "bottom-3 right-3"
+                            : "right-3 top-3"
+                      }`}
+                    />
                   )}
 
                   {captionsVisible && (
@@ -747,7 +906,21 @@ export function ClipStudio({
                   )}
                 </div>
 
-                <div className="mt-4 grid w-full grid-cols-2 gap-2.5 text-xs">
+                <WaveformScrubber
+                  sermonId={sermonId}
+                  durationSec={durationSec}
+                  startMs={activeClip.startMs}
+                  endMs={activeClip.endMs}
+                  playTimeSec={playTimeSec}
+                  segments={segments}
+                  onSeek={(sec) => {
+                    if (videoRef.current) videoRef.current.currentTime = sec;
+                    setPlayTimeSec(sec);
+                  }}
+                  onChangeRange={(sMs, eMs) => void handleTrimRange(sMs, eMs)}
+                />
+
+                <div className="mt-3 grid w-full grid-cols-2 gap-2.5 text-xs">
                   <div>
                     <label htmlFor="clip-start-sec" className="block text-[11px] font-medium text-[#4E6470]">
                       Start (sec)
@@ -758,16 +931,12 @@ export function ClipStudio({
                       min={0}
                       max={Math.max(0, durationSec - 1)}
                       step={0.5}
-                      defaultValue={(activeClip.startMs / 1000).toFixed(1)}
-                      onBlur={async (e) => {
-                        const nextMs = Math.max(0, Math.round(Number(e.target.value) * 1000));
-                        if (nextMs < activeClip.endMs - 1000) {
-                          await fetch(`/api/clips/${activeClip.id}`, {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ startMs: nextMs }),
-                          });
-                          onClipsChanged();
+                      value={startDraft}
+                      onChange={(e) => setStartDraft(e.target.value)}
+                      onBlur={async () => {
+                        const nextMs = Math.max(0, Math.round(Number(startDraft) * 1000));
+                        if (!Number.isNaN(nextMs) && nextMs < activeClip.endMs - 1000) {
+                          await handleTrimRange(nextMs, activeClip.endMs);
                         }
                       }}
                       className="mt-1 w-full rounded-xl border border-transparent bg-[#F3F5F7] px-2.5 py-1.5 text-[#0D1F28] focus:border-[#D5E1E6] focus:bg-white focus:outline-none"
@@ -783,42 +952,60 @@ export function ClipStudio({
                       min={1}
                       max={Math.max(10, durationSec)}
                       step={0.5}
-                      defaultValue={(activeClip.endMs / 1000).toFixed(1)}
-                      onBlur={async (e) => {
+                      value={endDraft}
+                      onChange={(e) => setEndDraft(e.target.value)}
+                      onBlur={async () => {
                         const nextMs = Math.max(
                           activeClip.startMs + 1000,
-                          Math.round(Number(e.target.value) * 1000)
+                          Math.round(Number(endDraft) * 1000)
                         );
-                        await fetch(`/api/clips/${activeClip.id}`, {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ endMs: nextMs }),
-                        });
-                        onClipsChanged();
+                        if (!Number.isNaN(nextMs)) {
+                          await handleTrimRange(activeClip.startMs, nextMs);
+                        }
                       }}
                       className="mt-1 w-full rounded-xl border border-transparent bg-[#F3F5F7] px-2.5 py-1.5 text-[#0D1F28] focus:border-[#D5E1E6] focus:bg-white focus:outline-none"
                     />
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  disabled={renderingId === activeClip.id}
-                  onClick={handleRenderAndDownload}
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-[#002A3C] py-2.5 text-xs font-medium text-white transition hover:bg-[#0B435B] disabled:opacity-60"
-                >
-                  {renderingId === activeClip.id ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                      Rendering {style.aspectRatio} MP4...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="h-4 w-4" aria-hidden="true" />
-                      Export MP4
-                    </>
-                  )}
-                </button>
+                <div className="mt-4 grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    disabled={renderingId === activeClip.id}
+                    onClick={handleRenderAndDownload}
+                    className="flex items-center justify-center gap-2 rounded-full bg-[#002A3C] py-2.5 text-xs font-medium text-white transition hover:bg-[#0B435B] disabled:opacity-60"
+                  >
+                    {renderingId === activeClip.id ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        Rendering {style.aspectRatio}...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4" aria-hidden="true" />
+                        Export MP4
+                      </>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={coverLoading}
+                    onClick={handleDownloadCover}
+                    className="flex items-center justify-center gap-2 rounded-full border border-[#D5E1E6] bg-white py-2.5 text-xs font-medium text-[#0D1F28] transition hover:bg-[#F3F5F7] disabled:opacity-60"
+                  >
+                    {coverLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        Building cover...
+                      </>
+                    ) : (
+                      <>
+                        <ImageIcon className="h-4 w-4 text-[#1D3519]" aria-hidden="true" />
+                        Export Cover JPG
+                      </>
+                    )}
+                  </button>
+                </div>
                 {activeClip.renderStatus === "completed" && (
                   <p className="mt-2 inline-flex items-center gap-1 text-xs text-emerald-700">
                     <Check className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1005,7 +1192,40 @@ export function ClipStudio({
                     checked={style.facialTracking}
                     onChange={(v) => persistStyle({ ...style, facialTracking: v })}
                   />
+                  <ToggleRow
+                    label="Church Watermark"
+                    hint="Subtle corner Garden mark"
+                    checked={Boolean(style.showWatermark)}
+                    onChange={(v) => persistStyle({ ...style, showWatermark: v })}
+                  />
+                  <ToggleRow
+                    label="2s Garden Outro"
+                    hint="Append church bumper card"
+                    checked={Boolean(style.showOutroBumper)}
+                    onChange={(v) => persistStyle({ ...style, showOutroBumper: v })}
+                  />
                 </div>
+
+                {style.showWatermark && (
+                  <div className="flex items-center justify-between gap-2 rounded-xl border border-[#EDF1F4] bg-[#FAFBFD] px-3 py-2 text-xs">
+                    <span className="font-medium text-[#4E6470]">Watermark corner</span>
+                    <select
+                      aria-label="Watermark corner"
+                      value={style.watermarkPosition || "top-right"}
+                      onChange={(e) =>
+                        persistStyle({
+                          ...style,
+                          watermarkPosition: e.target.value as WatermarkPosition,
+                        })
+                      }
+                      className="rounded-lg border border-[#E5EAEF] bg-white px-2.5 py-1 text-xs text-[#0D1F28]"
+                    >
+                      <option value="top-right">Top Right</option>
+                      <option value="top-left">Top Left</option>
+                      <option value="bottom-right">Bottom Right</option>
+                    </select>
+                  </div>
+                )}
 
                 {/* Collapsible Custom Colors & Box Style */}
                 <div className="rounded-xl border border-[#EDF1F4] bg-[#FAFBFD]">

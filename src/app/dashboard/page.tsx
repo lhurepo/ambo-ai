@@ -22,11 +22,19 @@ import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { useToast } from "@/components/ui/ToastProvider";
 import { downloadMediaEndpoint, revealPathInFinder } from "@/lib/client-download";
 
+interface SearchMatchItem {
+  kind: "transcript" | "scripture" | "quotes" | "notes";
+  snippet: string;
+  startSec: number | null;
+}
+
 interface SermonListItem {
   id: string;
   title: string;
   speaker: string;
   topic: string;
+  seriesName?: string;
+  tags?: string[];
   sourceType: string;
   status: string;
   progress: number;
@@ -37,7 +45,15 @@ interface SermonListItem {
   isVideo: number;
   durationSec: number;
   clipCount: number;
+  searchMatches?: SearchMatchItem[];
   createdAt: number;
+}
+
+function formatSeekTime(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${String(rem).padStart(2, "0")}`;
 }
 
 function formatDuration(sec: number): string {
@@ -83,8 +99,11 @@ export default function DashboardPage() {
   const { success, error: toastError } = useToast();
   const [user, setUser] = useState<{ email: string; fullName: string; ministryName: string } | null>(null);
   const [sermons, setSermons] = useState<SermonListItem[]>([]);
+  const [allSeries, setAllSeries] = useState<string[]>([]);
+  const [seriesFilter, setSeriesFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "media" | "manuscript">("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [modalKind, setModalKind] = useState<"media" | "manuscript" | null>(null);
@@ -111,11 +130,21 @@ export default function DashboardPage() {
     }
   };
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 180);
+    return () => clearTimeout(t);
+  }, [query]);
+
   const loadData = useCallback(async () => {
     try {
+      const qs = new URLSearchParams({
+        q: debouncedQuery,
+        filter,
+        ...(seriesFilter ? { series: seriesFilter } : {}),
+      });
       const [acctRes, sermRes] = await Promise.all([
         fetch("/api/account"),
-        fetch(`/api/sermons?q=${encodeURIComponent(query)}&filter=${filter}`),
+        fetch(`/api/sermons?${qs.toString()}`),
       ]);
       if (acctRes.status === 401) {
         router.push("/signin");
@@ -128,11 +157,12 @@ export default function DashboardPage() {
       if (sermRes.ok) {
         const s = await sermRes.json();
         setSermons(s.sermons || []);
+        setAllSeries(Array.isArray(s.allSeries) ? s.allSeries : []);
       }
     } finally {
       setLoading(false);
     }
-  }, [filter, query, router]);
+  }, [filter, debouncedQuery, seriesFilter, router]);
 
   useEffect(() => {
     loadData();
@@ -190,7 +220,8 @@ export default function DashboardPage() {
   };
 
   const latest = sermons[0];
-  const isPureEmpty = !loading && sermons.length === 0 && query === "" && filter === "all";
+  const isPureEmpty =
+    !loading && sermons.length === 0 && query === "" && filter === "all" && seriesFilter === "";
 
   return (
     <AuthenticatedShell
@@ -386,24 +417,42 @@ export default function DashboardPage() {
 
             <div className="rounded-2xl border border-[#E5EAEF] bg-white">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EDF1F4] px-5 py-4">
-                <div className="flex items-center gap-1 rounded-full bg-[#F3F5F7] p-1 text-xs font-medium">
-                  {(["all", "media", "manuscript"] as const).map((tab) => (
-                    <button
-                      key={tab}
-                      type="button"
-                      onClick={() => setFilter(tab)}
-                      className={`rounded-full px-3 py-1 capitalize transition ${
-                        filter === tab
-                          ? "bg-white text-[#0D1F28] shadow-sm"
-                          : "text-[#4E6470] hover:text-[#0D1F28]"
-                      }`}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 rounded-full bg-[#F3F5F7] p-1 text-xs font-medium">
+                    {(["all", "media", "manuscript"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setFilter(tab)}
+                        className={`rounded-full px-3 py-1 capitalize transition ${
+                          filter === tab
+                            ? "bg-white text-[#0D1F28] shadow-sm"
+                            : "text-[#4E6470] hover:text-[#0D1F28]"
+                        }`}
+                      >
+                        {tab}
+                      </button>
+                    ))}
+                  </div>
+
+                  {allSeries.length > 0 && (
+                    <select
+                      aria-label="Filter by sermon series"
+                      value={seriesFilter}
+                      onChange={(e) => setSeriesFilter(e.target.value)}
+                      className="rounded-full border border-[#E5EAEF] bg-[#FAFBFD] px-3 py-1.5 text-xs font-medium text-[#0D1F28] focus:outline-none"
                     >
-                      {tab}
-                    </button>
-                  ))}
+                      <option value="">All Series ({allSeries.length})</option>
+                      {allSeries.map((sr) => (
+                        <option key={sr} value={sr}>
+                          Series: {sr}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
-                <div className="relative w-full sm:w-64">
+                <div className="relative w-full sm:w-80">
                   <Search
                     className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#70848F]"
                     aria-hidden="true"
@@ -412,7 +461,7 @@ export default function DashboardPage() {
                     type="search"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search sermons"
+                    placeholder="Search sermons, Scripture, quotes, transcript..."
                     aria-label="Search sermons"
                     className="w-full rounded-full border border-transparent bg-[#F3F5F7] py-1.5 pl-8 pr-3 text-xs text-[#0D1F28] placeholder-[#70848F] focus:border-[#D5E1E6] focus:bg-white focus:outline-none"
                   />
@@ -426,58 +475,92 @@ export default function DashboardPage() {
               ) : (
                 <div className="divide-y divide-[#EDF1F4]">
                   {sermons.map((s) => (
-                    <div
-                      key={s.id}
-                      className="flex flex-wrap items-center justify-between gap-4 px-5 py-3.5 transition hover:bg-[#FAFBFD]"
-                    >
-                      <Link
-                        href={`/sermon/${s.id}`}
-                        className="flex min-w-0 flex-1 items-center gap-3.5"
-                      >
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F3F5F7] text-[#002A3C]">
-                          {s.sourceType === "manuscript" ? (
-                            <FileText className="h-4 w-4" aria-hidden="true" />
-                          ) : (
-                            <Film className="h-4 w-4" aria-hidden="true" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-[#0D1F28]">{s.title}</p>
-                          <p className="mt-0.5 truncate text-xs text-[#4E6470]">
-                            {s.speaker || "The Garden Church"}
-                            {s.durationSec > 0 ? ` · ${formatDuration(s.durationSec)}` : ""}
-                            {` · ${formatDate(s.createdAt)}`}
-                          </p>
-                        </div>
-                      </Link>
+                    <div key={s.id} className="px-5 py-3.5 transition hover:bg-[#FAFBFD]">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <Link
+                          href={`/sermon/${s.id}`}
+                          className="flex min-w-0 flex-1 items-center gap-3.5"
+                        >
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F3F5F7] text-[#002A3C]">
+                            {s.sourceType === "manuscript" ? (
+                              <FileText className="h-4 w-4" aria-hidden="true" />
+                            ) : (
+                              <Film className="h-4 w-4" aria-hidden="true" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-[#0D1F28]">{s.title}</p>
+                            <p className="mt-0.5 truncate text-xs text-[#4E6470]">
+                              {s.speaker || "The Garden Church"}
+                              {s.seriesName ? ` · Series: ${s.seriesName}` : ""}
+                              {s.durationSec > 0 ? ` · ${formatDuration(s.durationSec)}` : ""}
+                              {` · ${formatDate(s.createdAt)}`}
+                            </p>
+                          </div>
+                        </Link>
 
-                      <div className="flex items-center gap-2.5">
-                        {s.topic && (
-                          <span className="hidden rounded-full bg-[#F3F5F7] px-2.5 py-0.5 text-xs text-[#4E6470] sm:inline-block">
-                            {s.topic}
-                          </span>
-                        )}
-                        <StatusBadge status={s.status} progress={s.progress} />
-                        {s.mediaFileName && (
+                        <div className="flex flex-wrap items-center gap-2">
+                          {s.seriesName && (
+                            <span className="hidden rounded-full bg-[#F4F2E6] px-2.5 py-0.5 text-[11px] font-medium text-[#1D3519] sm:inline-block">
+                              {s.seriesName}
+                            </span>
+                          )}
+                          {s.topic && (
+                            <span className="hidden rounded-full bg-[#F3F5F7] px-2.5 py-0.5 text-xs text-[#4E6470] sm:inline-block">
+                              {s.topic}
+                            </span>
+                          )}
+                          {s.tags?.slice(0, 2).map((tag) => (
+                            <span
+                              key={tag}
+                              className="hidden rounded-full border border-[#E5EAEF] bg-white px-2 py-0.5 text-[10px] text-[#4E6470] md:inline-block"
+                            >
+                              #{tag}
+                            </span>
+                          ))}
+                          <StatusBadge status={s.status} progress={s.progress} />
+                          {s.mediaFileName && (
+                            <button
+                              type="button"
+                              onClick={() => void handleDownloadMp3(s.id, s.title)}
+                              aria-label={`Download MP3 audio for ${s.title}`}
+                              title="Download Spotify MP3"
+                              className="rounded-lg p-1.5 text-[#70848F] transition hover:bg-[#EBF4F7] hover:text-[#002A3C]"
+                            >
+                              <Headphones className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => void handleDownloadMp3(s.id, s.title)}
-                            aria-label={`Download MP3 audio for ${s.title}`}
-                            title="Download Spotify MP3"
-                            className="rounded-lg p-1.5 text-[#70848F] transition hover:bg-[#EBF4F7] hover:text-[#002A3C]"
+                            onClick={() => setDeleteTarget(s)}
+                            aria-label={`Delete ${s.title}`}
+                            className="rounded-lg p-1.5 text-[#70848F] transition hover:bg-rose-50 hover:text-rose-700"
                           >
-                            <Headphones className="h-4 w-4" aria-hidden="true" />
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setDeleteTarget(s)}
-                          aria-label={`Delete ${s.title}`}
-                          className="rounded-lg p-1.5 text-[#70848F] transition hover:bg-rose-50 hover:text-rose-700"
-                        >
-                          <Trash2 className="h-4 w-4" aria-hidden="true" />
-                        </button>
+                        </div>
                       </div>
+
+                      {s.searchMatches && s.searchMatches.length > 0 && (
+                        <div className="mt-2.5 flex flex-wrap gap-2 pl-12">
+                          {s.searchMatches.map((m, idx) => (
+                            <Link
+                              key={idx}
+                              href={
+                                m.startSec !== null
+                                  ? `/sermon/${s.id}?t=${m.startSec}`
+                                  : `/sermon/${s.id}?tab=${m.kind}`
+                              }
+                              className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[#D5E1E6] bg-[#FAFBFD] px-2.5 py-1 text-[11px] text-[#4E6470] transition hover:border-[#002A3C] hover:text-[#0D1F28]"
+                            >
+                              <span className="shrink-0 rounded bg-[#EBF4F7] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#002A3C]">
+                                {m.startSec !== null ? `▶ ${formatSeekTime(m.startSec)}` : m.kind}
+                              </span>
+                              <span className="truncate">{m.snippet}</span>
+                            </Link>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

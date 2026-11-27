@@ -10,7 +10,7 @@ import { generateAllSermonResources } from "../ai/generators";
 import { getEffectiveGenerationPrompts } from "../ai/default-generation-prompts";
 import type { LlmConfig } from "../ai/provider";
 import { withLocalBinPath } from "../env-path";
-import { decryptSecret } from "../security";
+import { decryptSecret, assertSafeDataPath } from "../security";
 import type { CaptionSettings, LlmProvider, TranscriptSegment } from "../types";
 import { DEFAULT_CAPTION_SETTINGS } from "../types";
 
@@ -609,4 +609,85 @@ export async function renderClipMp4(clipId: string): Promise<string> {
     emitSermonEvent(sermon.id, { type: "clip", clipId, renderStatus: "error", error: msg });
     throw err;
   }
+}
+
+export async function renderClipThumbnailJpg(clipId: string): Promise<string> {
+  ensureDbInitialized();
+  const clip = db.select().from(clips).where(eq(clips.id, clipId)).get();
+  if (!clip) throw new Error("Clip not found");
+
+  const sermon = db.select().from(sermons).where(eq(sermons.id, clip.sermonId)).get();
+  if (!sermon || !sermon.mediaPath || !fs.existsSync(sermon.mediaPath)) {
+    throw new Error("Source media file not found for this sermon");
+  }
+
+  const renderDir = assertSafeDataPath(path.join(process.cwd(), "data", "renders", sermon.id));
+  fs.mkdirSync(renderDir, { recursive: true });
+
+  const styleFile = assertSafeDataPath(path.join(renderDir, `${clipId}.style.json`));
+  const outFile = assertSafeDataPath(path.join(renderDir, `${clipId}_cover.jpg`));
+
+  fs.writeFileSync(
+    styleFile,
+    clip.captionSettingsJson || JSON.stringify(DEFAULT_CAPTION_SETTINGS),
+    "utf8"
+  );
+
+  const args = [
+    RENDER_SCRIPT,
+    "--mode",
+    "thumbnail",
+    "--input",
+    sermon.mediaPath,
+    "--output",
+    outFile,
+    "--start-ms",
+    String(clip.startMs),
+    "--end-ms",
+    String(clip.endMs),
+    "--style-json",
+    styleFile,
+    "--fonts-dir",
+    FONTS_DIR,
+    "--title",
+    clip.title || sermon.title,
+  ];
+
+  const trackPath = path.join(process.cwd(), "data", "uploads", sermon.id, "face_track.json");
+  if (fs.existsSync(trackPath)) {
+    args.push("--face-track-json", trackPath);
+  }
+
+  await runCommand(resolvePythonBin(), args);
+  return outFile;
+}
+
+export async function ensureSermonMp3(sermonId: string, mediaPath: string): Promise<string> {
+  const safeMediaPath = assertSafeDataPath(mediaPath);
+  const workDir = assertSafeDataPath(path.join(process.cwd(), "data", "uploads", sermonId));
+  fs.mkdirSync(workDir, { recursive: true });
+  const mp3Path = assertSafeDataPath(path.join(workDir, "sermon_spotify_192k.mp3"));
+
+  const mediaStat = fs.statSync(safeMediaPath);
+  const needEncode =
+    !fs.existsSync(mp3Path) || fs.statSync(mp3Path).mtimeMs < mediaStat.mtimeMs;
+
+  if (needEncode) {
+    await runCommand("ffmpeg", [
+      "-y",
+      "-i",
+      safeMediaPath,
+      "-vn",
+      "-ac",
+      "2",
+      "-ar",
+      "44100",
+      "-c:a",
+      "libmp3lame",
+      "-b:a",
+      "192k",
+      mp3Path,
+    ]);
+  }
+  return mp3Path;
 }

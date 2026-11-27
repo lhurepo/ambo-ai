@@ -1,45 +1,12 @@
 import { NextResponse } from "next/server";
-import { spawn } from "child_process";
 import fs from "fs";
-import path from "path";
 import { and, eq } from "drizzle-orm";
 import { db, ensureDbInitialized } from "@/lib/db";
 import { sermons } from "@/lib/db/schema";
 import { ensureUserAiSettings, getCurrentUser } from "@/lib/auth";
+import { ensureSermonMp3 } from "@/lib/jobs/pipeline";
 import { copyFileToExportDir } from "@/lib/local-export";
-import { assertSafeDataPath, isValidUuid, safeErrorResponse } from "@/lib/security";
-import { withLocalBinPath } from "@/lib/env-path";
-
-function runFfmpegMp3(inputPath: string, outputPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      "ffmpeg",
-      [
-        "-y",
-        "-i",
-        inputPath,
-        "-vn",
-        "-ac",
-        "2",
-        "-ar",
-        "44100",
-        "-c:a",
-        "libmp3lame",
-        "-b:a",
-        "192k",
-        outputPath,
-      ],
-      { env: withLocalBinPath(), stdio: ["ignore", "ignore", "pipe"] }
-    );
-    let stderr = "";
-    child.stderr.on("data", (d) => (stderr += d.toString()));
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-400)}`));
-    });
-    child.on("error", reject);
-  });
-}
+import { isValidUuid, safeErrorResponse } from "@/lib/security";
 
 export async function GET(
   req: Request,
@@ -68,17 +35,7 @@ export async function GET(
       );
     }
 
-    const safeMediaPath = assertSafeDataPath(sermon.mediaPath);
-    const workDir = path.join(process.cwd(), "data", "uploads", id);
-    const mp3Path = assertSafeDataPath(path.join(workDir, "sermon_spotify_192k.mp3"));
-
-    const mediaStat = fs.statSync(safeMediaPath);
-    const needEncode =
-      !fs.existsSync(mp3Path) || fs.statSync(mp3Path).mtimeMs < mediaStat.mtimeMs;
-
-    if (needEncode) {
-      await runFfmpegMp3(safeMediaPath, mp3Path);
-    }
+    const mp3Path = await ensureSermonMp3(id, sermon.mediaPath);
 
     const safeTitle =
       sermon.title

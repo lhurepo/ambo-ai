@@ -1,7 +1,20 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { Check, ChevronDown, Copy, Edit3, Film, Loader2, Search, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  Edit3,
+  Film,
+  FolderOpen,
+  Loader2,
+  Search,
+  X,
+} from "lucide-react";
+import { downloadMediaEndpoint, revealPathInFinder } from "@/lib/client-download";
+import { useToast } from "@/components/ui/ToastProvider";
 import type { TranscriptSegment } from "@/lib/types";
 
 interface ClipRange {
@@ -48,7 +61,11 @@ export function InteractiveTranscript({
   onCreateClip,
   onNavigateToClip,
 }: InteractiveTranscriptProps) {
+  const { error: toastError } = useToast();
   const [search, setSearch] = useState("");
+  const [savedNotice, setSavedNotice] = useState<{ savedPath: string; displayPath: string } | null>(
+    null
+  );
   const [editMode, setEditMode] = useState(false);
   const [editingWord, setEditingWord] = useState<{ segIdx: number; wordIdx: number; value: string } | null>(null);
   const [savingWord, setSavingWord] = useState(false);
@@ -93,6 +110,20 @@ export function InteractiveTranscript({
       }
     }
     return null;
+  };
+
+  const handleExportCaptions = async (format: "srt" | "vtt") => {
+    setSavedNotice(null);
+    try {
+      await downloadMediaEndpoint({
+        endpointUrl: `/api/sermons/${sermonId}/captions?format=${format}`,
+        fileName: `sermon-captions.${format}`,
+        mimeType: format === "vtt" ? "text/vtt" : "application/x-subrip",
+        onSavedToFolder: (info) => setSavedNotice(info),
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Could not export captions.");
+    }
   };
 
   const handleSaveWord = async () => {
@@ -197,6 +228,25 @@ export function InteractiveTranscript({
 
           <button
             type="button"
+            onClick={() => void handleExportCaptions("srt")}
+            title="Download .SRT captions for YouTube or Premiere"
+            className="inline-flex items-center gap-1 rounded-full border border-[#D5E1E6] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0D1F28] transition hover:bg-[#F3F5F7]"
+          >
+            <Download className="h-3 w-3 text-[#4E6470]" aria-hidden="true" />
+            .SRT
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleExportCaptions("vtt")}
+            title="Download .VTT web captions"
+            className="inline-flex items-center gap-1 rounded-full border border-[#D5E1E6] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0D1F28] transition hover:bg-[#F3F5F7]"
+          >
+            <Download className="h-3 w-3 text-[#4E6470]" aria-hidden="true" />
+            .VTT
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               setEditMode((v) => !v);
               setEditingWord(null);
@@ -212,6 +262,23 @@ export function InteractiveTranscript({
           </button>
         </div>
       </div>
+
+      {savedNotice && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#D5E1E6] bg-[#F4F2E6]/70 px-3.5 py-2 text-xs text-[#1D3519]">
+          <span className="inline-flex items-center gap-1.5 font-medium">
+            <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Saved to <code className="font-mono">{savedNotice.displayPath}</code>
+          </span>
+          <button
+            type="button"
+            onClick={() => void revealPathInFinder(savedNotice.savedPath)}
+            className="inline-flex items-center gap-1 rounded-full border border-[#D5E1E6] bg-white px-2.5 py-1 text-[11px] font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
+          >
+            <FolderOpen className="h-3 w-3" aria-hidden="true" />
+            Show in Finder
+          </button>
+        </div>
+      )}
 
       <p className="mt-3 text-xs text-[#70848F]">
         {editMode

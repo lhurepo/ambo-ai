@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Check,
   CheckCircle2,
   Cpu,
+  Download,
   Eye,
   EyeOff,
   FileText,
@@ -20,11 +22,17 @@ import {
   Sparkles,
   Sun,
   Terminal,
+  Upload,
 } from "lucide-react";
 import { AuthenticatedShell } from "@/components/layout/AuthenticatedShell";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { useTheme, type ThemeMode } from "@/components/ui/ThemeProvider";
 import { useToast } from "@/components/ui/ToastProvider";
+import {
+  fetchExportPreferences,
+  revealPathInFinder,
+  saveBlobWithMode,
+} from "@/lib/client-download";
 import {
   DEFAULT_CAPTION_SETTINGS,
   DEFAULT_PDF_DESIGN,
@@ -124,6 +132,16 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [clearingKey, setClearingKey] = useState(false);
+
+  // Backup & Restore
+  const restoreInputRef = useRef<HTMLInputElement>(null);
+  const [exportingBackup, setExportingBackup] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoringBackup, setRestoringBackup] = useState(false);
+  const [backupNotice, setBackupNotice] = useState<{
+    savedPath: string;
+    displayPath: string;
+  } | null>(null);
 
   const loadHealth = async () => {
     setCheckingHealth(true);
@@ -272,6 +290,60 @@ export default function SettingsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "reveal", path: dirPath.trim() }),
     });
+  };
+
+  const handleExportBackup = async () => {
+    setExportingBackup(true);
+    setBackupNotice(null);
+    try {
+      const prefs = await fetchExportPreferences();
+      const saveToDisk =
+        prefs.exportMode === "folder" && Boolean(prefs.pdfExportDir || prefs.mediaExportDir);
+      if (saveToDisk) {
+        const res = await fetch("/api/system/backup?saveToDisk=1");
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "Could not save backup.");
+        setBackupNotice({ savedPath: data.savedPath, displayPath: data.displayPath });
+        return;
+      }
+      const res = await fetch("/api/system/backup");
+      if (!res.ok) throw new Error("Could not create backup.");
+      const blob = await res.blob();
+      const today = new Date().toISOString().slice(0, 10);
+      await saveBlobWithMode({
+        blob,
+        fileName: `amboai-backup-${today}.db`,
+        mimeType: "application/octet-stream",
+        exportMode: prefs.exportMode,
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Backup export failed.");
+    } finally {
+      setExportingBackup(false);
+    }
+  };
+
+  const handleConfirmRestore = async () => {
+    if (!restoreFile) return;
+    setRestoringBackup(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", restoreFile);
+      const res = await fetch("/api/system/backup", { method: "POST", body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not restore backup.");
+      setRestoreFile(null);
+      success("Backup restored successfully.");
+      if (data.requiresSignIn) {
+        router.push("/signin");
+      } else {
+        window.location.reload();
+      }
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Backup restore failed.");
+    } finally {
+      setRestoringBackup(false);
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -563,6 +635,73 @@ export default function SettingsPage() {
                           <p className="mt-1 text-[11px] text-[#4E6470]">{row.detail}</p>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </section>
+
+                <section className="rounded-2xl border border-[#E5EAEF] bg-white p-6">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-base font-semibold text-[#0D1F28]">
+                        Local Backup &amp; Restore
+                      </h2>
+                      <p className="mt-1 text-xs text-[#4E6470]">
+                        Save a portable snapshot of all sermons, notes, clips, and custom prompts
+                        for transferring Macs or keeping weekly backups.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      disabled={exportingBackup}
+                      onClick={() => void handleExportBackup()}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[#1D3519] px-4 py-2 text-xs font-medium text-white hover:bg-[#274622] disabled:opacity-60"
+                    >
+                      {exportingBackup ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5 text-[#BDD630]" aria-hidden="true" />
+                      )}
+                      {exportingBackup ? "Creating Backup..." : "Export Backup (.db)"}
+                    </button>
+
+                    <input
+                      ref={restoreInputRef}
+                      type="file"
+                      accept=".db,.sqlite,.sqlite3,.bak"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) setRestoreFile(f);
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => restoreInputRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#D5E1E6] bg-white px-4 py-2 text-xs font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
+                    >
+                      <Upload className="h-3.5 w-3.5 text-[#4E6470]" aria-hidden="true" />
+                      Restore from Backup...
+                    </button>
+                  </div>
+
+                  {backupNotice && (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#D5E1E6] bg-[#F4F2E6]/70 px-3.5 py-2.5 text-xs text-[#1D3519]">
+                      <span className="inline-flex items-center gap-1.5 font-medium">
+                        <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        Saved to <code className="font-mono">{backupNotice.displayPath}</code>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void revealPathInFinder(backupNotice.savedPath)}
+                        className="inline-flex items-center gap-1 rounded-full border border-[#D5E1E6] bg-white px-2.5 py-1 text-[11px] font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
+                      >
+                        <FolderOpen className="h-3 w-3" aria-hidden="true" />
+                        Show in Finder
+                      </button>
                     </div>
                   )}
                 </section>
@@ -959,6 +1098,31 @@ export default function SettingsPage() {
                       ))}
                     </select>
                   </div>
+
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-[#EDF1F4] bg-[#FAFBFD] px-3.5 py-2.5 text-xs text-[#0D1F28]">
+                      <span>Show corner Garden logo watermark</span>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(captionDefaults.showWatermark)}
+                        onChange={(e) =>
+                          setCaptionDefaults((c) => ({ ...c, showWatermark: e.target.checked }))
+                        }
+                        className="h-4 w-4 accent-[#1D3519]"
+                      />
+                    </label>
+                    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-[#EDF1F4] bg-[#FAFBFD] px-3.5 py-2.5 text-xs text-[#0D1F28]">
+                      <span>Append 2s Garden Church outro card</span>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(captionDefaults.showOutroBumper)}
+                        onChange={(e) =>
+                          setCaptionDefaults((c) => ({ ...c, showOutroBumper: e.target.checked }))
+                        }
+                        className="h-4 w-4 accent-[#1D3519]"
+                      />
+                    </label>
+                  </div>
                 </section>
               </>
             )}
@@ -1276,6 +1440,21 @@ export default function SettingsPage() {
         loading={clearingKey}
         onConfirm={handleConfirmClearKey}
         onCancel={() => setConfirmClearOpen(false)}
+      />
+
+      <ConfirmModal
+        open={Boolean(restoreFile)}
+        title="Restore local database backup?"
+        description={
+          restoreFile
+            ? `Restore "${restoreFile.name}"? Ambo AI automatically saves a safety copy of your current database to data/amboai.db.pre-restore.bak first.`
+            : ""
+        }
+        confirmLabel="Restore Backup"
+        variant="danger"
+        loading={restoringBackup}
+        onConfirm={handleConfirmRestore}
+        onCancel={() => setRestoreFile(null)}
       />
     </AuthenticatedShell>
   );

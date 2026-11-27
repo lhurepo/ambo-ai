@@ -108,3 +108,38 @@ export function copyFileToExportDir(
     fileName: path.basename(target),
   };
 }
+
+export function createDatedExportSubfolder(
+  rawBaseDir: string,
+  folderTitle: string
+): { absDir: string; displayDir: string } {
+  const { absDir: baseAbs } = validateAndResolveExportDir(rawBaseDir);
+  if (!baseAbs) {
+    throw new Error("No export folder is configured.");
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const safeTitle =
+    folderTitle
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 64) || "Sermon Launch Pack";
+
+  const baseName = `${today} - ${safeTitle}`;
+  let candidate = path.join(baseAbs, baseName);
+  let counter = 2;
+  while (fs.existsSync(candidate) && counter < 200) {
+    candidate = path.join(baseAbs, `${baseName} (${counter})`);
+    counter += 1;
+  }
+
+  if (!isPathWithinAllowedExportRoots(candidate)) {
+    throw new Error("Invalid export subfolder.");
+  }
+  fs.mkdirSync(candidate, { recursive: true });
+  return {
+    absDir: candidate,
+    displayDir: formatHomeDisplayPath(candidate),
+  };
+}

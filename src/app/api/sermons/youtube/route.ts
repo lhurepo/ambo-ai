@@ -28,6 +28,19 @@ export async function POST(req: Request) {
     const body = await req.json();
     const rawUrl = String(body.youtubeUrl || "");
     const customTitle = typeof body.title === "string" ? body.title.trim().slice(0, 160) : "";
+    const seriesName = typeof body.seriesName === "string" ? body.seriesName.trim().slice(0, 100) : "";
+    const tags = typeof body.tags === "string"
+      ? body.tags
+          .split(",")
+          .map((t: string) => t.trim().slice(0, 32))
+          .filter(Boolean)
+          .slice(0, 12)
+      : Array.isArray(body.tags)
+        ? body.tags
+            .filter((t: unknown): t is string => typeof t === "string" && t.trim().length > 0)
+            .map((t: string) => t.trim().slice(0, 32))
+            .slice(0, 12)
+        : [];
     const attachToId = typeof body.sermonId === "string" ? body.sermonId.trim() : null;
 
     const parsed = parseYoutubeVideoId(rawUrl);
@@ -82,6 +95,8 @@ export async function POST(req: Request) {
         title: customTitle || "YouTube Sermon",
         speaker: userSettings.defaultSpeaker || "",
         topic: "Faith & Discipleship",
+        seriesName,
+        tagsJson: JSON.stringify(tags),
         sourceType: "media",
         status: "queued",
         progress: 2,

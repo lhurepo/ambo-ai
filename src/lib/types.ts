@@ -17,6 +17,8 @@ export type CaptionPosition = "top" | "mid" | "bottom";
 export type CaptionBgStyle = "none" | "background" | "border";
 export type AspectRatio = "9:16" | "1:1" | "16:9";
 
+export type WatermarkPosition = "top-right" | "top-left" | "bottom-right";
+
 export interface CaptionSettings {
   typography: CaptionTypography;
   aspectRatio: AspectRatio;
@@ -30,6 +32,9 @@ export interface CaptionSettings {
   facialTracking: boolean;
   showCaptions?: boolean;
   uppercase?: boolean;
+  showWatermark?: boolean;
+  watermarkPosition?: WatermarkPosition;
+  showOutroBumper?: boolean;
 }
 
 export interface FontOption {
@@ -240,6 +245,9 @@ export const DEFAULT_CAPTION_SETTINGS: CaptionSettings = {
   facialTracking: true,
   showCaptions: true,
   uppercase: false,
+  showWatermark: false,
+  watermarkPosition: "top-right",
+  showOutroBumper: false,
 };
 
 export type PdfHeaderStyle = "banner" | "minimal" | "boxed" | "centered";
@@ -264,6 +272,10 @@ export interface PdfDesignSpec {
   showBadgeNumbers: boolean;
   uppercaseHeadings: boolean;
   useAiDesigner: boolean;
+  fillInTheBlanks?: boolean;
+  showQrCode?: boolean;
+  qrUrl?: string;
+  qrLabel?: string;
 }
 
 export const PDF_COLOR_THEMES: Array<{ id: string; label: string; palette: PdfPalette }> = [
@@ -323,6 +335,10 @@ export const DEFAULT_PDF_DESIGN: PdfDesignSpec = {
   showBadgeNumbers: true,
   uppercaseHeadings: true,
   useAiDesigner: false,
+  fillInTheBlanks: false,
+  showQrCode: false,
+  qrUrl: "",
+  qrLabel: "Watch & Connect",
 };
 
 export type ExportMode = "browser" | "folder" | "ask";
@@ -365,6 +381,7 @@ export const ASSET_TYPES = [
   "social_facebook",
   "social_twitter",
   "social_captions",
+  "podcast_show_notes",
   "email_recap",
   "blog_post",
   "coach_structure",

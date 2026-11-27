@@ -119,6 +119,10 @@ ${JSON.stringify(sections).slice(0, 22000)}`;
           ? dRaw.uppercaseHeadings
           : baseDesign.uppercaseHeadings,
       useAiDesigner: baseDesign.useAiDesigner,
+      fillInTheBlanks: baseDesign.fillInTheBlanks,
+      showQrCode: baseDesign.showQrCode,
+      qrUrl: baseDesign.qrUrl,
+      qrLabel: baseDesign.qrLabel,
     };
 
     const nextSections: GardenPdfSection[] = [];

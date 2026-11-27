@@ -42,6 +42,8 @@ export const sermons = sqliteTable("sermons", {
   title: text("title").notNull(),
   speaker: text("speaker").notNull().default(""),
   topic: text("topic").notNull().default("Faith & Discipleship"),
+  seriesName: text("series_name").notNull().default(""),
+  tagsJson: text("tags_json").notNull().default("[]"),
   sourceType: text("source_type").notNull(), // media | manuscript | both
   status: text("status").notNull().default("queued"), // queued | uploading | transcribing | generating | processing_clips | completed | error
   progress: integer("progress").notNull().default(0),

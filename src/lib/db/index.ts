@@ -13,27 +13,45 @@ if (!fs.existsSync(DATA_DIR)) {
 
 const DB_PATH = path.join(DATA_DIR, "amboai.db");
 
+type DrizzleDb = ReturnType<typeof drizzle<typeof schema>>;
+
 const globalForDb = globalThis as unknown as {
   __amboSqlite?: Database.Database;
+  __amboDrizzle?: DrizzleDb;
   __amboInitialized?: boolean;
 };
 
-function createSqliteClient() {
-  if (globalForDb.__amboSqlite) {
+export function getSqliteClient(): Database.Database {
+  if (globalForDb.__amboSqlite && globalForDb.__amboSqlite.open) {
     return globalForDb.__amboSqlite;
   }
   const sqlite = new Database(DB_PATH);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
   globalForDb.__amboSqlite = sqlite;
+  globalForDb.__amboDrizzle = drizzle(sqlite, { schema });
   return sqlite;
 }
 
-const sqlite = createSqliteClient();
-export const db = drizzle(sqlite, { schema });
+function getDrizzleDb(): DrizzleDb {
+  const sqlite = getSqliteClient();
+  if (!globalForDb.__amboDrizzle) {
+    globalForDb.__amboDrizzle = drizzle(sqlite, { schema });
+  }
+  return globalForDb.__amboDrizzle;
+}
+
+export const db: DrizzleDb = new Proxy({} as DrizzleDb, {
+  get(_target, prop) {
+    const active = getDrizzleDb();
+    const val = Reflect.get(active, prop, active);
+    return typeof val === "function" ? val.bind(active) : val;
+  },
+});
 
 export function ensureDbInitialized() {
   if (globalForDb.__amboInitialized) return;
+  const sqlite = getSqliteClient();
 
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -78,6 +96,8 @@ export function ensureDbInitialized() {
       title TEXT NOT NULL,
       speaker TEXT NOT NULL DEFAULT '',
       topic TEXT NOT NULL DEFAULT 'Faith & Discipleship',
+      series_name TEXT NOT NULL DEFAULT '',
+      tags_json TEXT NOT NULL DEFAULT '[]',
       source_type TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'queued',
       progress INTEGER NOT NULL DEFAULT 0,
@@ -169,13 +189,10 @@ export function ensureDbInitialized() {
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
   `);
 
-  try {
-    sqlite.exec("ALTER TABLE sermons ADD COLUMN youtube_url TEXT;");
-  } catch {
-    // Column already exists on fresh DBs
-  }
-
   for (const colSql of [
+    "ALTER TABLE sermons ADD COLUMN youtube_url TEXT;",
+    "ALTER TABLE sermons ADD COLUMN series_name TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE sermons ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';",
     "ALTER TABLE ai_settings ADD COLUMN pdf_export_dir TEXT NOT NULL DEFAULT '';",
     "ALTER TABLE ai_settings ADD COLUMN media_export_dir TEXT NOT NULL DEFAULT '';",
     "ALTER TABLE ai_settings ADD COLUMN export_mode TEXT NOT NULL DEFAULT 'browser';",
@@ -190,9 +207,15 @@ export function ensureDbInitialized() {
     }
   }
 
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_sermons_series ON sermons(user_id, series_name);");
+
   // Seed built-in v2prompts idempotently
   const now = Date.now();
-  const existingBuiltins = db.select({ id: schema.prompts.id }).from(schema.prompts).where(eq(schema.prompts.isBuiltin, 1)).all();
+  const existingBuiltins = db
+    .select({ id: schema.prompts.id })
+    .from(schema.prompts)
+    .where(eq(schema.prompts.isBuiltin, 1))
+    .all();
   if (existingBuiltins.length < BUILTIN_V2_PROMPTS.length) {
     const existingSet = new Set(existingBuiltins.map((p) => p.id));
     for (const p of BUILTIN_V2_PROMPTS) {
@@ -216,4 +239,35 @@ export function ensureDbInitialized() {
   }
 
   globalForDb.__amboInitialized = true;
+}
+
+export async function exportSqliteBackupToFile(destPath: string): Promise<void> {
+  ensureDbInitialized();
+  const sqlite = getSqliteClient();
+  await sqlite.backup(destPath);
+}
+
+export async function restoreSqliteFromValidatedFile(
+  validatedTempPath: string
+): Promise<{ preRestoreBackupPath: string }> {
+  ensureDbInitialized();
+  const currentSqlite = getSqliteClient();
+  const preRestoreBackupPath = path.join(DATA_DIR, "amboai.db.pre-restore.bak");
+  await currentSqlite.backup(preRestoreBackupPath);
+
+  try {
+    currentSqlite.pragma("wal_checkpoint(TRUNCATE)");
+  } catch {}
+  currentSqlite.close();
+
+  fs.rmSync(`${DB_PATH}-wal`, { force: true });
+  fs.rmSync(`${DB_PATH}-shm`, { force: true });
+  fs.copyFileSync(validatedTempPath, DB_PATH);
+
+  globalForDb.__amboSqlite = undefined;
+  globalForDb.__amboDrizzle = undefined;
+  globalForDb.__amboInitialized = false;
+
+  ensureDbInitialized();
+  return { preRestoreBackupPath };
 }

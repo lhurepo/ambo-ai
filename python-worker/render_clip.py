@@ -55,6 +55,116 @@ ASPECT_RES = {
     "16:9": (1920, 1080),
 }
 
+BRAND_DIR = Path(__file__).resolve().parent.parent / "public" / "brand" / "garden"
+
+
+def compute_crop_box(src_w: int, src_h: int, out_w: int, out_h: int, center_x: float) -> tuple[int, int, int, int]:
+    target_ratio = out_w / float(out_h)
+    src_ratio = src_w / float(src_h)
+    if src_ratio > target_ratio:
+        crop_h = src_h
+        crop_w = max(2, int(round(src_h * target_ratio)) // 2 * 2)
+        max_x = max(0, src_w - crop_w)
+        crop_x = int(max(0, min(max_x, round(center_x * src_w - crop_w / 2.0))))
+        crop_y = 0
+    else:
+        crop_w = src_w
+        crop_h = max(2, int(round(src_w / target_ratio)) // 2 * 2)
+        crop_x = 0
+        crop_y = max(0, (src_h - crop_h) // 2)
+    return crop_w, crop_h, crop_x, crop_y
+
+
+def make_watermark_png(tmp: Path, out_w: int, out_h: int, style: dict) -> tuple[Path, int, int] | None:
+    if not style.get("showWatermark"):
+        return None
+    mark_path = BRAND_DIR / "logo-mark-light.png"
+    if not mark_path.exists():
+        mark_path = BRAND_DIR / "logo-mark-vine.png"
+    if not mark_path.exists():
+        return None
+
+    from PIL import Image
+
+    im = Image.open(mark_path).convert("RGBA")
+    wm_w = max(56, int(out_w * 0.082))
+    wm_h = max(1, int(round(im.height * (wm_w / float(im.width)))))
+    im = im.resize((wm_w, wm_h), Image.Resampling.LANCZOS)
+    r, g, b, a = im.split()
+    a = a.point(lambda p: int(p * 0.78))
+    im = Image.merge("RGBA", (r, g, b, a))
+
+    wm_out = tmp / "watermark.png"
+    im.save(wm_out)
+
+    pos = style.get("watermarkPosition", "top-right")
+    pad_x = max(28, int(out_w * 0.038))
+    pad_top = max(36, int(out_h * 0.036))
+    pad_bottom = max(48, int(out_h * 0.045))
+
+    if pos == "top-left":
+        return wm_out, pad_x, pad_top
+    if pos == "bottom-right":
+        return wm_out, out_w - wm_w - pad_x, out_h - wm_h - pad_bottom
+    return wm_out, out_w - wm_w - pad_x, pad_top
+
+
+def make_outro_mp4(tmp: Path, out_w: int, out_h: int, fonts_dir: Path, out_mp4: Path) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    card = Image.new("RGB", (out_w, out_h), (29, 53, 25))  # Garden Root Green #1D3519
+    draw = ImageDraw.Draw(card)
+
+    logo_path = BRAND_DIR / "logo-primary-light.png"
+    cur_y = int(out_h * 0.36)
+    if logo_path.exists():
+        logo = Image.open(logo_path).convert("RGBA")
+        lw = int(out_w * 0.44)
+        lh = max(1, int(round(logo.height * (lw / float(logo.width)))))
+        logo = logo.resize((lw, lh), Image.Resampling.LANCZOS)
+        cur_y = (out_h - lh - 96) // 2
+        card.paste(logo, ((out_w - lw) // 2, cur_y), logo)
+        cur_y += lh + 28
+
+    bar_w = max(90, int(out_w * 0.12))
+    bar_x0 = (out_w - bar_w) // 2
+    draw.rounded_rectangle([bar_x0, cur_y, bar_x0 + bar_w, cur_y + 6], radius=3, fill=(189, 214, 48))
+    cur_y += 28
+
+    font_size = max(26, int(out_w * 0.028))
+    font = None
+    for fname in ["Yankee-SemiBold.otf", "Yankee-Bold.otf", "PlusJakartaSans-SemiBold.ttf"]:
+        fp = fonts_dir / fname
+        if fp.exists():
+            try:
+                font = ImageFont.truetype(str(fp), font_size)
+                break
+            except Exception:
+                pass
+    if font is None:
+        font = ImageFont.load_default()
+
+    tagline = "THE GARDEN CHURCH  ·  BOSTON"
+    tw = draw.textlength(tagline, font=font)
+    draw.text(((out_w - tw) / 2.0, cur_y), tagline, font=font, fill=(244, 242, 230))
+
+    card_png = tmp / "outro_card.png"
+    card.save(card_png)
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1", "-t", "2.0", "-r", "30", "-i", str(card_png),
+        "-f", "lavfi", "-t", "2.0", "-i", "anullsrc=r=44100:cl=stereo",
+        "-vf", "fade=t=in:st=0:d=0.25,setsar=1,format=yuv420p",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "21",
+        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+        "-shortest",
+        str(out_mp4),
+    ]
+    proc = subprocess.run(cmd, cwd=str(tmp), capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"Outro bumper render failed: {proc.stderr[-600:]}")
+
 
 def hex_to_ass(hex_color: str, alpha: int = 0) -> str:
     """Convert #RRGGBB to ASS &HAABBGGRR."""
@@ -90,10 +200,17 @@ def track_faces(video_path: str, output_path: str) -> None:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720)
     duration = total_frames / fps if fps > 0 else 0.0
 
-    frontal_xml = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-    profile_xml = os.path.join(cv2.data.haarcascades, "haarcascade_profileface.xml")
-    frontal = cv2.CascadeClassifier(frontal_xml)
-    profile = cv2.CascadeClassifier(profile_xml)
+    frontal = None
+    profile = None
+    cascade_cls = getattr(cv2, "CascadeClassifier", None)
+    cv2_data = getattr(cv2, "data", None)
+    if cascade_cls and cv2_data and hasattr(cv2_data, "haarcascades"):
+        frontal_xml = os.path.join(cv2_data.haarcascades, "haarcascade_frontalface_default.xml")
+        profile_xml = os.path.join(cv2_data.haarcascades, "haarcascade_profileface.xml")
+        if os.path.exists(frontal_xml):
+            frontal = cascade_cls(frontal_xml)
+        if os.path.exists(profile_xml):
+            profile = cascade_cls(profile_xml)
 
     sample_interval_sec = 0.5
     step = max(1, int(round(fps * sample_interval_sec)))
@@ -106,14 +223,19 @@ def track_faces(video_path: str, output_path: str) -> None:
             break
         if frame_idx % step == 0:
             t_sec = round(frame_idx / fps, 3)
-            small_w = 480
-            scale = small_w / float(width)
-            small_h = max(1, int(round(height * scale)))
-            small = cv2.resize(frame, (small_w, small_h))
-            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-            faces = frontal.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=4, minSize=(28, 28))
-            if len(faces) == 0:
-                faces = profile.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=4, minSize=(28, 28))
+            faces = ()
+            if frontal is not None or profile is not None:
+                small_w = 480
+                scale = small_w / float(width)
+                small_h = max(1, int(round(height * scale)))
+                small = cv2.resize(frame, (small_w, small_h))
+                gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+                if frontal is not None:
+                    faces = frontal.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=4, minSize=(28, 28))
+                if len(faces) == 0 and profile is not None:
+                    faces = profile.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=4, minSize=(28, 28))
+            else:
+                small_w, small_h = width, height
 
             if len(faces) > 0:
                 # Pick largest detected speaker face
@@ -524,6 +646,7 @@ def render_clip(args: argparse.Namespace) -> None:
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     show_captions = bool(style.get("showCaptions", True))
+    use_outro = bool(style.get("showOutroBumper", False))
     use_ass = ffmpeg_has_ass_filter()
 
     with tempfile.TemporaryDirectory(prefix="ambo_render_") as tmpdir:
@@ -534,166 +657,419 @@ def render_clip(args: argparse.Namespace) -> None:
         else:
             fonts_local.mkdir(exist_ok=True)
 
+        wm_info = make_watermark_png(tmp, out_w, out_h, style)
+        render_target = (tmp / "main_body.mp4") if use_outro else out_path.resolve()
+
         if not show_captions:
             if has_video and src_w > 0 and src_h > 0:
-                target_ratio = out_w / float(out_h)
-                src_ratio = src_w / float(src_h)
-                if src_ratio > target_ratio:
-                    crop_h = src_h
-                    crop_w = max(2, int(round(src_h * target_ratio)) // 2 * 2)
-                    max_x = max(0, src_w - crop_w)
-                    crop_x = int(max(0, min(max_x, round(center_x * src_w - crop_w / 2.0))))
-                    crop_y = 0
+                crop_w, crop_h, crop_x, crop_y = compute_crop_box(src_w, src_h, out_w, out_h, center_x)
+                base_chain = f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos,setsar=1"
+                if wm_info:
+                    wm_path, wm_x, wm_y = wm_info
+                    fc = f"{base_chain}[b];[b][1:v]overlay={wm_x}:{wm_y}:format=auto[v]"
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-i", str(wm_path),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
                 else:
-                    crop_w = src_w
-                    crop_h = max(2, int(round(src_w / target_ratio)) // 2 * 2)
-                    crop_x = 0
-                    crop_y = max(0, (src_h - crop_h) // 2)
-
-                vf = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos"
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-ss", f"{start_sec:.3f}",
-                    "-t", f"{duration_sec:.3f}",
-                    "-i", str(Path(args.input).resolve()),
-                    "-vf", vf,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
-                    str(out_path.resolve()),
-                ]
+                    vf = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos,setsar=1"
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-vf", vf,
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
             else:
                 wave_h = max(180, int(out_h * 0.16))
                 wave_y = int(out_h * 0.42)
-                fc = (
-                    f"color=c=#1D3519:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
-                    f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#BDD630|#F4F2E6:rate=30[waves];"
-                    f"[bg][waves]overlay=0:{wave_y}:shortest=1[v]"
-                )
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-ss", f"{start_sec:.3f}",
-                    "-t", f"{duration_sec:.3f}",
-                    "-i", str(Path(args.input).resolve()),
-                    "-filter_complex", fc,
-                    "-map", "[v]", "-map", "0:a",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
-                    str(out_path.resolve()),
-                ]
+                if wm_info:
+                    wm_path, wm_x, wm_y = wm_info
+                    fc = (
+                        f"color=c=#1D3519:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
+                        f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#BDD630|#F4F2E6:rate=30[waves];"
+                        f"[bg][waves]overlay=0:{wave_y}:shortest=1[b];"
+                        f"[b][1:v]overlay={wm_x}:{wm_y}:format=auto[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-i", str(wm_path),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
+                else:
+                    fc = (
+                        f"color=c=#1D3519:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
+                        f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#BDD630|#F4F2E6:rate=30[waves];"
+                        f"[bg][waves]overlay=0:{wave_y}:shortest=1[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
         elif use_ass:
             ass_file = tmp / "captions.ass"
             build_ass_file(ass_file, words, style, start_sec, end_sec, out_w, out_h)
 
             if has_video and src_w > 0 and src_h > 0:
-                target_ratio = out_w / float(out_h)
-                src_ratio = src_w / float(src_h)
-                if src_ratio > target_ratio:
-                    crop_h = src_h
-                    crop_w = max(2, int(round(src_h * target_ratio)) // 2 * 2)
-                    max_x = max(0, src_w - crop_w)
-                    crop_x = int(max(0, min(max_x, round(center_x * src_w - crop_w / 2.0))))
-                    crop_y = 0
+                crop_w, crop_h, crop_x, crop_y = compute_crop_box(src_w, src_h, out_w, out_h, center_x)
+                if wm_info:
+                    wm_path, wm_x, wm_y = wm_info
+                    fc = (
+                        f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos,setsar=1,"
+                        f"ass=captions.ass:fontsdir=fonts[b];[b][1:v]overlay={wm_x}:{wm_y}:format=auto[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-i", str(wm_path),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
                 else:
-                    crop_w = src_w
-                    crop_h = max(2, int(round(src_w / target_ratio)) // 2 * 2)
-                    crop_x = 0
-                    crop_y = max(0, (src_h - crop_h) // 2)
-
-                vf = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos,ass=captions.ass:fontsdir=fonts"
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-ss", f"{start_sec:.3f}",
-                    "-t", f"{duration_sec:.3f}",
-                    "-i", str(Path(args.input).resolve()),
-                    "-vf", vf,
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
-                    str(out_path.resolve()),
-                ]
+                    vf = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos,setsar=1,ass=captions.ass:fontsdir=fonts"
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-vf", vf,
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
             else:
                 wave_h = max(180, int(out_h * 0.16))
                 wave_y = int(out_h * 0.20)
-                fc = (
-                    f"color=c=#002A3C:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
-                    f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#6FB3C8|#2A7B96:rate=30[waves];"
-                    f"[bg][waves]overlay=0:{wave_y}:shortest=1,ass=captions.ass:fontsdir=fonts[v]"
-                )
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-ss", f"{start_sec:.3f}",
-                    "-t", f"{duration_sec:.3f}",
-                    "-i", str(Path(args.input).resolve()),
-                    "-filter_complex", fc,
-                    "-map", "[v]", "-map", "0:a",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
-                    str(out_path.resolve()),
-                ]
+                if wm_info:
+                    wm_path, wm_x, wm_y = wm_info
+                    fc = (
+                        f"color=c=#1D3519:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
+                        f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#BDD630|#F4F2E6:rate=30[waves];"
+                        f"[bg][waves]overlay=0:{wave_y}:shortest=1,ass=captions.ass:fontsdir=fonts[b];"
+                        f"[b][1:v]overlay={wm_x}:{wm_y}:format=auto[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-i", str(wm_path),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
+                else:
+                    fc = (
+                        f"color=c=#1D3519:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
+                        f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#BDD630|#F4F2E6:rate=30[waves];"
+                        f"[bg][waves]overlay=0:{wave_y}:shortest=1,ass=captions.ass:fontsdir=fonts[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
         else:
             concat_file = build_pillow_overlay_track(
                 tmp, words, style, start_sec, end_sec, out_w, out_h, fonts_local
             )
             if has_video and src_w > 0 and src_h > 0:
-                target_ratio = out_w / float(out_h)
-                src_ratio = src_w / float(src_h)
-                if src_ratio > target_ratio:
-                    crop_h = src_h
-                    crop_w = max(2, int(round(src_h * target_ratio)) // 2 * 2)
-                    max_x = max(0, src_w - crop_w)
-                    crop_x = int(max(0, min(max_x, round(center_x * src_w - crop_w / 2.0))))
-                    crop_y = 0
+                crop_w, crop_h, crop_x, crop_y = compute_crop_box(src_w, src_h, out_w, out_h, center_x)
+                if wm_info:
+                    wm_path, wm_x, wm_y = wm_info
+                    fc = (
+                        f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos,setsar=1[base];"
+                        f"[base][1:v]overlay=0:0:shortest=1[c];"
+                        f"[c][2:v]overlay={wm_x}:{wm_y}:format=auto[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                        "-i", str(wm_path),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
                 else:
-                    crop_w = src_w
-                    crop_h = max(2, int(round(src_w / target_ratio)) // 2 * 2)
-                    crop_x = 0
-                    crop_y = max(0, (src_h - crop_h) // 2)
-
-                fc = (
-                    f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos[base];"
-                    f"[base][1:v]overlay=0:0:shortest=1[v]"
-                )
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-ss", f"{start_sec:.3f}",
-                    "-t", f"{duration_sec:.3f}",
-                    "-i", str(Path(args.input).resolve()),
-                    "-f", "concat", "-safe", "0", "-i", str(concat_file),
-                    "-filter_complex", fc,
-                    "-map", "[v]", "-map", "0:a",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
-                    str(out_path.resolve()),
-                ]
+                    fc = (
+                        f"[0:v]crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos,setsar=1[base];"
+                        f"[base][1:v]overlay=0:0:shortest=1[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
             else:
                 wave_h = max(180, int(out_h * 0.16))
                 wave_y = int(out_h * 0.20)
-                fc = (
-                    f"color=c=#002A3C:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
-                    f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#6FB3C8|#2A7B96:rate=30[waves];"
-                    f"[bg][waves]overlay=0:{wave_y}:shortest=1[base];"
-                    f"[base][1:v]overlay=0:0:shortest=1[v]"
-                )
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-ss", f"{start_sec:.3f}",
-                    "-t", f"{duration_sec:.3f}",
-                    "-i", str(Path(args.input).resolve()),
-                    "-f", "concat", "-safe", "0", "-i", str(concat_file),
-                    "-filter_complex", fc,
-                    "-map", "[v]", "-map", "0:a",
-                    "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
-                    str(out_path.resolve()),
-                ]
+                if wm_info:
+                    wm_path, wm_x, wm_y = wm_info
+                    fc = (
+                        f"color=c=#1D3519:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
+                        f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#BDD630|#F4F2E6:rate=30[waves];"
+                        f"[bg][waves]overlay=0:{wave_y}:shortest=1[base];"
+                        f"[base][1:v]overlay=0:0:shortest=1[c];"
+                        f"[c][2:v]overlay={wm_x}:{wm_y}:format=auto[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                        "-i", str(wm_path),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
+                else:
+                    fc = (
+                        f"color=c=#1D3519:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
+                        f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#BDD630|#F4F2E6:rate=30[waves];"
+                        f"[bg][waves]overlay=0:{wave_y}:shortest=1[base];"
+                        f"[base][1:v]overlay=0:0:shortest=1[v]"
+                    )
+                    cmd = [
+                        "ffmpeg", "-y",
+                        "-ss", f"{start_sec:.3f}",
+                        "-t", f"{duration_sec:.3f}",
+                        "-i", str(Path(args.input).resolve()),
+                        "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                        "-filter_complex", fc,
+                        "-map", "[v]", "-map", "0:a",
+                        "-r", "30", "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                        str(render_target),
+                    ]
 
         proc = subprocess.run(cmd, cwd=str(tmp), capture_output=True, text=True)
         if proc.returncode != 0:
             raise RuntimeError(f"FFmpeg render failed: {proc.stderr[-1000:]}")
 
+        if use_outro:
+            outro_mp4 = tmp / "outro_bumper.mp4"
+            make_outro_mp4(tmp, out_w, out_h, fonts_local, outro_mp4)
+            concat_cmd = [
+                "ffmpeg", "-y",
+                "-i", str(render_target),
+                "-i", str(outro_mp4),
+                "-filter_complex", "[0:v]setsar=1,fps=30[v0];[1:v]setsar=1,fps=30[v1];[v0][0:a][v1][1:a]concat=n=2:v=1:a=1[v][a]",
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2", "-b:a", "128k", "-movflags", "+faststart",
+                str(out_path.resolve()),
+            ]
+            cproc = subprocess.run(concat_cmd, cwd=str(tmp), capture_output=True, text=True)
+            if cproc.returncode != 0:
+                raise RuntimeError(f"FFmpeg outro concat failed: {cproc.stderr[-800:]}")
+
+
+def render_thumbnail(args: argparse.Namespace) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    style = json.loads(Path(args.style_json).read_text(encoding="utf-8")) if args.style_json and Path(args.style_json).exists() else {}
+    aspect = style.get("aspectRatio", "9:16")
+    out_w, out_h = ASPECT_RES.get(aspect, (1080, 1920))
+
+    start_sec = max(0.0, float(args.start_ms) / 1000.0)
+    end_sec = max(start_sec + 1.0, float(args.end_ms) / 1000.0)
+    dur_sec = end_sec - start_sec
+
+    has_video, src_w, src_h = probe_has_video(args.input)
+    facial_tracking = bool(style.get("facialTracking", True))
+
+    center_x = 0.5
+    if facial_tracking and args.face_track_json and Path(args.face_track_json).exists():
+        track_data = json.loads(Path(args.face_track_json).read_text(encoding="utf-8"))
+        pts = [p for p in track_data.get("points", []) if start_sec <= p["t"] <= end_sec]
+        if pts:
+            center_x = float(np.median([p["centerX"] for p in pts]))
+
+    fonts_dir = Path(args.fonts_dir) if args.fonts_dir else Path(os.getcwd()) / "data" / "fonts"
+
+    base_img: Image.Image | None = None
+    if has_video and src_w > 0 and src_h > 0:
+        cap = cv2.VideoCapture(args.input)
+        if cap.isOpened():
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            frontal = None
+            cascade_cls = getattr(cv2, "CascadeClassifier", None)
+            cv2_data = getattr(cv2, "data", None)
+            if cascade_cls and cv2_data and hasattr(cv2_data, "haarcascades"):
+                frontal_xml = os.path.join(cv2_data.haarcascades, "haarcascade_frontalface_default.xml")
+                if os.path.exists(frontal_xml):
+                    frontal = cascade_cls(frontal_xml)
+            best_score = -1.0
+            best_frame = None
+
+            samples = 7
+            for k in range(samples):
+                t = start_sec + dur_sec * (0.14 + 0.72 * (k / max(1, samples - 1)))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    continue
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                sharp = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+                faces = ()
+                if frontal is not None:
+                    faces = frontal.detectMultiScale(
+                        cv2.resize(gray, (320, max(1, int(320 * src_h / src_w)))), 1.15, 4
+                    )
+                score = sharp + (180.0 if len(faces) > 0 else 0.0)
+                if score > best_score:
+                    best_score = score
+                    best_frame = frame
+            cap.release()
+
+            if best_frame is not None:
+                crop_w, crop_h, crop_x, crop_y = compute_crop_box(src_w, src_h, out_w, out_h, center_x)
+                cropped = best_frame[crop_y : crop_y + crop_h, crop_x : crop_x + crop_w]
+                resized = cv2.resize(cropped, (out_w, out_h), interpolation=cv2.INTER_LANCZOS4)
+                rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+                base_img = Image.fromarray(rgb)
+
+    if base_img is None:
+        base_img = Image.new("RGB", (out_w, out_h), (29, 53, 25))
+
+    canvas = base_img.convert("RGBA")
+
+    # Apply smooth bottom vignette gradient covering bottom 50%
+    grad = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
+    grad_draw = ImageDraw.Draw(grad)
+    start_grad_y = int(out_h * 0.48)
+    span = max(1, out_h - start_grad_y)
+    for y in range(start_grad_y, out_h):
+        alpha = int(232 * ((y - start_grad_y) / float(span)) ** 1.35)
+        grad_draw.line([(0, y), (out_w, y)], fill=(18, 20, 19, alpha))
+    canvas = Image.alpha_composite(canvas, grad)
+    draw = ImageDraw.Draw(canvas)
+
+    # Top-right subtle brand wordmark
+    logo_path = BRAND_DIR / "logo-primary-light.png"
+    if logo_path.exists():
+        logo = Image.open(logo_path).convert("RGBA")
+        lw = max(160, int(out_w * 0.22))
+        lh = max(1, int(round(logo.height * (lw / float(logo.width)))))
+        logo = logo.resize((lw, lh), Image.Resampling.LANCZOS)
+        canvas.paste(logo, (out_w - lw - int(out_w * 0.055), int(out_h * 0.045)), logo)
+
+    # Load headline font (prefer Yankee-ExtraBold or user's chosen clip typography)
+    typography = style.get("typography", "GardenYankee")
+    candidates = ["Yankee-ExtraBold.otf", "Yankee-Bold.otf"] + FONT_FILE_MAP.get(typography, []) + ["Poppins.ttf"]
+    font_size = max(54, int(out_w * 0.072))
+    font = None
+    for name in candidates:
+        fp = fonts_dir / name
+        if fp.exists():
+            try:
+                font = ImageFont.truetype(str(fp), font_size)
+                break
+            except Exception:
+                pass
+    if font is None:
+        font = ImageFont.load_default()
+
+    raw_title = (args.title or "Sunday Message").strip()
+    margin_x = int(out_w * 0.075)
+    max_text_w = out_w - margin_x * 2
+    words_list = raw_title.split()
+    lines: list[str] = []
+    cur = ""
+    for w in words_list:
+        cand = f"{cur} {w}".strip()
+        if cur and draw.textlength(cand, font=font) > max_text_w:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = cand
+    if cur:
+        lines.append(cur)
+    lines = lines[:4]
+
+    line_h = int(font_size * 1.16)
+    total_h = line_h * len(lines)
+    bottom_pad = int(out_h * 0.085)
+    text_top_y = out_h - bottom_pad - total_h
+
+    # Vine accent bar above title
+    draw.rounded_rectangle(
+        [margin_x, text_top_y - 24, margin_x + 96, text_top_y - 16],
+        radius=4,
+        fill=(189, 214, 48, 255),
+    )
+
+    for idx_l, ln in enumerate(lines):
+        draw.text(
+            (margin_x, text_top_y + idx_l * line_h),
+            ln,
+            font=font,
+            fill=(255, 255, 255, 255),
+            stroke_width=3,
+            stroke_fill=(18, 20, 19, 220),
+        )
+
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.convert("RGB").save(out_path, format="JPEG", quality=92)
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ambo AI face tracking & 9:16 karaoke MP4 renderer")
-    parser.add_argument("--mode", required=True, choices=["track", "render"])
+    parser = argparse.ArgumentParser(description="Ambo AI face tracking, MP4 & cover thumbnail renderer")
+    parser.add_argument("--mode", required=True, choices=["track", "render", "thumbnail"])
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--start-ms", type=int, default=0)
@@ -702,10 +1078,13 @@ def main() -> None:
     parser.add_argument("--style-json")
     parser.add_argument("--face-track-json")
     parser.add_argument("--fonts-dir")
+    parser.add_argument("--title")
     args = parser.parse_args()
 
     if args.mode == "track":
         track_faces(args.input, args.output)
+    elif args.mode == "thumbnail":
+        render_thumbnail(args)
     else:
         render_clip(args)
 

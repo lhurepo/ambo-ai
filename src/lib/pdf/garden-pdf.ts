@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import PDFDocument from "pdfkit";
+import { encodeQrMatrix } from "./qr";
 import {
   DEFAULT_PDF_DESIGN,
   type PdfDensity,
@@ -22,6 +23,7 @@ export interface GardenPdfInput {
   documentTitle?: string;
   sections: GardenPdfSection[];
   includeNoteLines?: boolean;
+  answerKeyMode?: boolean;
   design?: Partial<PdfDesignSpec>;
 }
 
@@ -48,7 +50,126 @@ const LOGO_MARK_DARK = path.join(
   "logo-mark-dark.png"
 );
 
-type InlineSpan = { text: string; font: string };
+type InlineSpan = { text: string; font: string; underline?: boolean; colorOverride?: string };
+
+const BLANK_STOPWORDS = new Set([
+  "about", "above", "after", "again", "against", "already", "always", "among", "another",
+  "around", "because", "become", "before", "being", "below", "between", "could", "during",
+  "every", "first", "found", "further", "great", "having", "hence", "jesus", "matthew",
+  "mark", "luke", "john", "romans", "psalm", "psalms", "chapter", "verse", "scripture",
+  "where", "which", "while", "other", "should", "since", "still", "study", "their",
+  "there", "these", "thing", "things", "think", "those", "though", "through", "today",
+  "under", "until", "water", "where", "which", "would", "middle", "notice", "people",
+]);
+
+function applyFillInTheBlankToLine(
+  line: string,
+  answerKeyMode: boolean,
+  state: { count: number }
+): string {
+  if (state.count >= 6) return line;
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.endsWith("?")) return line;
+  // Don't blank pure scripture reference bullets like "- **Matthew 11:28-30** — ..."
+  if (/^\*\*(?:1|2|3)?\s*(?:Genesis|Exodus|Psalm|Psalms|Matthew|Mark|Luke|John|Acts|Romans|Corinthians|Galatians|Ephesians|Philippians|Colossians|Hebrews|James|Peter|Revelation)\b/i.test(trimmed)) {
+    return line;
+  }
+
+  // Keep any leading bullet/number + bold label (e.g. "Main Takeaway 1:") untouched
+  let prefix = "";
+  let body = line;
+  const labelMatch = line.match(/^(\*\*[A-Za-z0-9\s,&'–-]{2,36}:\*\*\s+)(.+)$/);
+  if (labelMatch) {
+    prefix = labelMatch[1];
+    body = labelMatch[2];
+  }
+
+  // 1) Prefer an interior bold phrase of 1-3 non-bible words
+  const boldMatches = [...body.matchAll(/\*\*([A-Za-z][A-Za-z\s'-]{2,26})\*\*/g)];
+  for (const m of boldMatches) {
+    const phrase = m[1].trim();
+    if (phrase.split(/\s+/).length <= 3 && !/\d/.test(phrase)) {
+      state.count += 1;
+      const tok = answerKeyMode ? `{{ANS:${phrase}}}` : `{{BLANK:${phrase}}}`;
+      return prefix + body.replace(m[0], tok);
+    }
+  }
+
+  // 2) Otherwise choose one meaningful content word (>= 5 chars, pure alpha)
+  const words = body.match(/\b[A-Za-z]{5,14}\b/g) || [];
+  let chosen = "";
+  for (const w of words) {
+    if (!BLANK_STOPWORDS.has(w.toLowerCase())) {
+      chosen = w;
+      break;
+    }
+  }
+  if (!chosen) return line;
+
+  state.count += 1;
+  const tok = answerKeyMode ? `{{ANS:${chosen}}}` : `{{BLANK:${chosen}}}`;
+  const replaced = body.replace(new RegExp(`\\b${chosen}\\b`), tok);
+  return prefix + replaced;
+}
+
+function drawQrBadge(
+  doc: PDFKit.PDFDocument,
+  opts: {
+    url: string;
+    label: string;
+    x: number;
+    y: number;
+    size: number;
+    darkHex: string;
+    labelColorHex: string;
+    fontName: string;
+  }
+) {
+  const cleanUrl = opts.url.trim().slice(0, 220);
+  if (!cleanUrl) return;
+  const matrix = encodeQrMatrix(cleanUrl);
+  const n = matrix.length;
+  const pad = 4;
+  const cardSize = opts.size;
+
+  doc.roundedRect(opts.x, opts.y, cardSize, cardSize, 5).fill("#FFFFFF");
+
+  const innerSize = cardSize - pad * 2;
+  const cell = innerSize / n;
+  doc.fillColor(opts.darkHex);
+
+  for (let r = 0; r < n; r++) {
+    let runStart = -1;
+    for (let c = 0; c <= n; c++) {
+      const dark = c < n && matrix[r][c];
+      if (dark && runStart === -1) {
+        runStart = c;
+      } else if (!dark && runStart !== -1) {
+        doc.rect(
+          opts.x + pad + runStart * cell,
+          opts.y + pad + r * cell,
+          (c - runStart) * cell + 0.08,
+          cell + 0.08
+        );
+        runStart = -1;
+      }
+    }
+  }
+  doc.fill();
+
+  const cleanLabel = (opts.label || "Watch & Connect").trim().slice(0, 26);
+  if (cleanLabel) {
+    doc
+      .fillColor(opts.labelColorHex)
+      .font(opts.fontName)
+      .fontSize(6.5)
+      .text(cleanLabel, opts.x - 4, opts.y + cardSize + 3, {
+        width: cardSize + 8,
+        align: "center",
+        lineBreak: false,
+      });
+  }
+}
 
 function isHexLight(hex: string): boolean {
   const c = (hex || "#FFFFFF").replace("#", "");
@@ -61,6 +182,8 @@ function isHexLight(hex: string): boolean {
 
 function stripMarkdown(line: string): string {
   return line
+    .replace(/\{\{BLANK:[^}]+\}\}/g, "______________")
+    .replace(/\{\{ANS:([^}]+)\}\}/g, "[$1]")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/\*([^*]+)\*/g, "$1")
@@ -71,11 +194,12 @@ function parseInlineMarkdown(
   line: string,
   boldFont: string,
   italicFont: string,
-  baseFont: string
+  baseFont: string,
+  primaryHex: string
 ): InlineSpan[] {
   const spans: InlineSpan[] = [];
   const normalized = line.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  const tokenRe = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
+  const tokenRe = /(\{\{BLANK:[^}]+\}\}|\{\{ANS:[^}]+\}\}|\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = tokenRe.exec(normalized)) !== null) {
@@ -83,7 +207,20 @@ function parseInlineMarkdown(
       spans.push({ text: normalized.slice(last, match.index), font: baseFont });
     }
     const tok = match[0];
-    if (tok.startsWith("**") && tok.endsWith("**")) {
+    if (tok.startsWith("{{BLANK:")) {
+      spans.push({
+        text: "______________",
+        font: boldFont,
+        colorOverride: primaryHex,
+      });
+    } else if (tok.startsWith("{{ANS:") && tok.endsWith("}}")) {
+      spans.push({
+        text: tok.slice(6, -2),
+        font: boldFont,
+        underline: true,
+        colorOverride: primaryHex,
+      });
+    } else if (tok.startsWith("**") && tok.endsWith("**")) {
       spans.push({ text: tok.slice(2, -2), font: boldFont });
     } else if (tok.startsWith("*") && tok.endsWith("*")) {
       spans.push({ text: tok.slice(1, -1), font: italicFont });
@@ -109,25 +246,34 @@ function writeRichLine(
     baseFont: string;
     boldFont: string;
     italicFont: string;
+    primaryHex?: string;
     lineGap?: number;
   }
 ) {
-  const spans = parseInlineMarkdown(text, options.boldFont, options.italicFont, options.baseFont);
-  doc.fillColor(options.color).fontSize(options.size);
+  const spans = parseInlineMarkdown(
+    text,
+    options.boldFont,
+    options.italicFont,
+    options.baseFont,
+    options.primaryHex || options.color
+  );
+  doc.fontSize(options.size);
   const lineGap = options.lineGap ?? 3.5;
   spans.forEach((span, idx) => {
     const isLast = idx === spans.length - 1;
-    doc.font(span.font);
+    doc.fillColor(span.colorOverride || options.color).font(span.font);
     if (idx === 0) {
       doc.text(span.text, x, doc.y, {
         width,
         lineGap,
+        underline: Boolean(span.underline),
         continued: !isLast,
       });
     } else {
       doc.text(span.text, {
         width,
         lineGap,
+        underline: Boolean(span.underline),
         continued: !isLast,
       });
     }
@@ -349,10 +495,18 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
     };
 
     // === HEADER RENDERING (4 Styles) ===
-    const cleanSubtitle = (input.documentTitle || "SERMON RESOURCES & DISCUSSION GUIDE")
+    const answerKeyMode = Boolean(input.answerKeyMode);
+    const showQr = Boolean(design.showQrCode && design.qrUrl && design.qrUrl.trim());
+    const cleanSubtitleBase = (input.documentTitle || "SERMON RESOURCES & DISCUSSION GUIDE")
       .replace(/\s*[—–-]\s*The Garden Church\s*$/i, "")
       .trim()
       .toUpperCase();
+    const cleanSubtitle =
+      design.fillInTheBlanks && answerKeyMode
+        ? `${cleanSubtitleBase}  ·  LEADER ANSWER KEY`
+        : design.fillInTheBlanks
+          ? `${cleanSubtitleBase}  ·  FILL-IN-THE-BLANK`
+          : cleanSubtitleBase;
     const rawTitle = (input.sermonTitle || "Sermon Notes").trim();
     const displayTitle = design.uppercaseHeadings ? rawTitle.toUpperCase() : rawTitle;
     const titleSize =
@@ -374,8 +528,10 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
 
     if (headerStyle === "minimal") {
       const topY = 40;
+      const qrSize = showQr ? 50 : 0;
       const logoW = design.showLogo && logoForLight ? 78 : 0;
-      const textW = logoW ? contentW - logoW - 20 : contentW;
+      const rightReserve = (logoW ? logoW + 16 : 0) + (qrSize ? qrSize + 14 : 0);
+      const textW = rightReserve ? contentW - rightReserve - 6 : contentW;
 
       doc.font(FONT_SEMI).fontSize(8.5);
       const subH = doc.heightOfString(cleanSubtitle, { width: textW, characterSpacing: 1.2 });
@@ -406,11 +562,27 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         bottomY += 6 + mH;
       }
 
-      if (design.showLogo && logoForLight) {
-        doc.image(logoForLight, pageW - marginR - logoW, topY + 2, { width: logoW });
+      if (showQr) {
+        drawQrBadge(doc, {
+          url: design.qrUrl || "",
+          label: design.qrLabel || "Watch & Connect",
+          x: pageW - marginR - qrSize,
+          y: topY,
+          size: qrSize,
+          darkHex: COLORS.primary,
+          labelColorHex: COLORS.muted,
+          fontName: FONT_SEMI,
+        });
       }
 
-      const ruleY = Math.max(bottomY + 14, topY + (logoW ? 48 : 0));
+      if (design.showLogo && logoForLight) {
+        const logoX = showQr
+          ? pageW - marginR - qrSize - 14 - logoW
+          : pageW - marginR - logoW;
+        doc.image(logoForLight, logoX, topY + 2, { width: logoW });
+      }
+
+      const ruleY = Math.max(bottomY + 14, topY + (logoW || qrSize ? 58 : 0));
       doc
         .moveTo(marginL, ruleY)
         .lineTo(pageW - marginR, ruleY)
@@ -420,14 +592,29 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
       doc.y = ruleY + 18;
     } else if (headerStyle === "centered") {
       let curY = 40;
+      const qrSize = showQr ? 48 : 0;
+      if (showQr) {
+        drawQrBadge(doc, {
+          url: design.qrUrl || "",
+          label: design.qrLabel || "Watch & Connect",
+          x: pageW - marginR - qrSize,
+          y: 34,
+          size: qrSize,
+          darkHex: COLORS.primary,
+          labelColorHex: COLORS.muted,
+          fontName: FONT_SEMI,
+        });
+      }
       if (design.showLogo && logoForLight) {
         const lw = 76;
         doc.image(logoForLight, (pageW - lw) / 2, curY, { width: lw });
         curY += 44;
       }
+      const centerW = showQr ? contentW - (qrSize + 18) * 2 : contentW;
+      const centerX = showQr ? marginL + qrSize + 18 : marginL;
       doc.font(FONT_SEMI).fontSize(8.5);
       const subH = doc.heightOfString(cleanSubtitle, {
-        width: contentW,
+        width: centerW,
         align: "center",
         characterSpacing: 1.4,
       });
@@ -435,8 +622,8 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         .fillColor(COLORS.primary)
         .font(FONT_SEMI)
         .fontSize(8.5)
-        .text(cleanSubtitle, marginL, curY, {
-          width: contentW,
+        .text(cleanSubtitle, centerX, curY, {
+          width: centerW,
           align: "center",
           characterSpacing: 1.4,
         });
@@ -444,7 +631,7 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
 
       doc.font(FONT_DISPLAY).fontSize(titleSize);
       const tH = doc.heightOfString(displayTitle, {
-        width: contentW,
+        width: centerW,
         align: "center",
         lineGap: 2.5,
       });
@@ -452,8 +639,8 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         .fillColor(COLORS.soil)
         .font(FONT_DISPLAY)
         .fontSize(titleSize)
-        .text(displayTitle, marginL, curY, {
-          width: contentW,
+        .text(displayTitle, centerX, curY, {
+          width: centerW,
           align: "center",
           lineGap: 2.5,
         });
@@ -461,16 +648,16 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
 
       if (metaStr) {
         doc.font(FONT_MED).fontSize(9.5);
-        const mH = doc.heightOfString(metaStr, { width: contentW, align: "center" });
+        const mH = doc.heightOfString(metaStr, { width: centerW, align: "center" });
         doc
           .fillColor(COLORS.muted)
           .font(FONT_MED)
           .fontSize(9.5)
-          .text(metaStr, marginL, curY + 6, { width: contentW, align: "center" });
+          .text(metaStr, centerX, curY + 6, { width: centerW, align: "center" });
         curY += 6 + mH;
       }
 
-      curY += 14;
+      curY = Math.max(curY + 14, showQr ? 102 : curY + 14);
       doc
         .moveTo(marginL + 40, curY)
         .lineTo(pageW - marginR - 40, curY)
@@ -487,10 +674,12 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
       const textX = isBoxed ? marginL + 24 : marginL;
       const padTop = isBoxed ? 22 : 34;
       const padBottom = isBoxed ? 22 : 32;
-      const logoW = design.showLogo ? 92 : 0;
+      const qrSize = showQr ? 52 : 0;
+      const qrBlockH = showQr ? qrSize + 12 : 0;
+      const logoW = design.showLogo ? (showQr ? 74 : 92) : 0;
       const logoH = logoW ? logoW * (451 / 854) : 0;
-      const logoGap = logoW ? 24 : 0;
-      const headerTextW = (isBoxed ? contentW - 48 : contentW) - logoW - logoGap;
+      const rightReserve = (logoW ? logoW + 18 : 0) + (qrSize ? qrSize + 14 : 0);
+      const headerTextW = (isBoxed ? contentW - 48 : contentW) - rightReserve - (rightReserve > 0 ? 6 : 0);
 
       doc.font(FONT_SEMI).fontSize(8.5);
       const subtitleH = doc.heightOfString(cleanSubtitle, {
@@ -512,7 +701,7 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
       }
 
       const textBlockH = subtitleH + 7 + titleH + (metaStr ? 9 + metaH : 0);
-      const innerH = Math.max(textBlockH, logoH);
+      const innerH = Math.max(textBlockH, logoH, qrBlockH);
       const bannerH = Math.round(padTop + innerH + padBottom);
 
       if (isBoxed) {
@@ -523,10 +712,24 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         doc.rect(0, bannerH, pageW, 4).fill(COLORS.accent);
       }
 
+      const rightEdgeX = isBoxed ? boxX + boxW - 22 : pageW - marginR;
+      if (showQr) {
+        drawQrBadge(doc, {
+          url: design.qrUrl || "",
+          label: design.qrLabel || "Watch & Connect",
+          x: rightEdgeX - qrSize,
+          y: boxY + padTop + (innerH - qrBlockH) / 2,
+          size: qrSize,
+          darkHex: COLORS.primary,
+          labelColorHex: lightHeaderBg ? COLORS.primary : COLORS.surface,
+          fontName: FONT_SEMI,
+        });
+      }
+
       const chosenLogo = lightHeaderBg ? logoForLight : logoForDark;
       if (design.showLogo && chosenLogo) {
         const logoY = boxY + padTop + (innerH - logoH) / 2;
-        const logoX = isBoxed ? boxX + boxW - 24 - logoW : pageW - marginR - logoW;
+        const logoX = showQr ? rightEdgeX - qrSize - 14 - logoW : rightEdgeX - logoW;
         doc.image(chosenLogo, logoX, logoY, { width: logoW });
       }
 
@@ -591,6 +794,7 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
       doc.y += 10;
 
       const lines = (sec.content || "").replace(/\r\n/g, "\n").split("\n");
+      const blankState = { count: 0 };
       let i = 0;
       let seenContentLine = false;
 
@@ -714,7 +918,9 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         const numMatch = rawLine.match(/^(\d+)[.)]\s+(.+)$/);
         if (numMatch) {
           const num = numMatch[1];
-          const itemText = numMatch[2];
+          const itemText = design.fillInTheBlanks
+            ? applyFillInTheBlankToLine(numMatch[2], answerKeyMode, blankState)
+            : numMatch[2];
           doc.font(FONT_MED).fontSize(dSpec.bodySize);
           const textIndent = design.showBadgeNumbers ? 26 : 16;
           const estH = doc.heightOfString(stripMarkdown(itemText), {
@@ -751,6 +957,7 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
             baseFont: FONT_MED,
             boldFont: FONT_BOLD,
             italicFont: FONT_ITALIC,
+            primaryHex: COLORS.primary,
             lineGap: dSpec.lineGap,
           });
           doc.y = Math.max(doc.y + dSpec.itemGap, rowY + 19);
@@ -761,7 +968,9 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         // Bullet item (- / * / •)
         const bulletMatch = rawLine.match(/^[-*•]\s+(.+)$/);
         if (bulletMatch) {
-          const itemText = bulletMatch[1];
+          const itemText = design.fillInTheBlanks
+            ? applyFillInTheBlankToLine(bulletMatch[1], answerKeyMode, blankState)
+            : bulletMatch[1];
           doc.font(FONT_REG).fontSize(dSpec.bodySize);
           const estH = doc.heightOfString(stripMarkdown(itemText), {
             width: contentW - 16,
@@ -777,6 +986,7 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
             baseFont: FONT_REG,
             boldFont: FONT_BOLD,
             italicFont: FONT_ITALIC,
+            primaryHex: COLORS.primary,
             lineGap: dSpec.lineGap,
           });
           doc.y += dSpec.itemGap - 1;
@@ -785,18 +995,22 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         }
 
         // Standard paragraph
+        const paraText = design.fillInTheBlanks
+          ? applyFillInTheBlankToLine(rawLine, answerKeyMode, blankState)
+          : rawLine;
         doc.font(FONT_REG).fontSize(dSpec.bodySize);
-        const estH = doc.heightOfString(stripMarkdown(rawLine), {
+        const estH = doc.heightOfString(stripMarkdown(paraText), {
           width: contentW,
           lineGap: dSpec.lineGap + 0.5,
         });
         ensureSpace(estH + 8);
-        writeRichLine(doc, rawLine, marginL, contentW, {
+        writeRichLine(doc, paraText, marginL, contentW, {
           size: dSpec.bodySize,
           color: COLORS.soil,
           baseFont: FONT_REG,
           boldFont: FONT_BOLD,
           italicFont: FONT_ITALIC,
+          primaryHex: COLORS.primary,
           lineGap: dSpec.lineGap + 0.5,
         });
         doc.y += dSpec.itemGap;

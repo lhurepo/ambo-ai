@@ -5,6 +5,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { db, ensureDbInitialized } from "@/lib/db";
 import { chatMessages, clips, sermonAssets, sermons } from "@/lib/db/schema";
 import { getCurrentUser } from "@/lib/auth";
+import { isValidUuid } from "@/lib/security";
 
 export async function GET(
   _req: Request,
@@ -15,6 +16,9 @@ export async function GET(
   ensureDbInitialized();
 
   const { id } = await context.params;
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ error: "Invalid sermon id" }, { status: 400 });
+  }
   const sermon = db
     .select()
     .from(sermons)
@@ -67,12 +71,23 @@ export async function GET(
     faceTrack = sermon.faceTrackJson ? JSON.parse(sermon.faceTrackJson) : null;
   } catch {}
 
+  let tags: string[] = [];
+  try {
+    const parsed = sermon.tagsJson ? JSON.parse(sermon.tagsJson) : [];
+    if (Array.isArray(parsed)) {
+      tags = parsed.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+    }
+  } catch {}
+
   return NextResponse.json({
     sermon: {
       id: sermon.id,
       title: sermon.title,
       speaker: sermon.speaker,
       topic: sermon.topic,
+      seriesName: sermon.seriesName || "",
+      tags,
+      youtubeUrl: sermon.youtubeUrl || null,
       sourceType: sermon.sourceType,
       status: sermon.status,
       progress: sermon.progress,
@@ -107,6 +122,9 @@ export async function PATCH(
   ensureDbInitialized();
 
   const { id } = await context.params;
+  if (!isValidUuid(id)) {
+    return NextResponse.json({ error: "Invalid sermon id" }, { status: 400 });
+  }
   const sermon = db
     .select()
     .from(sermons)
@@ -119,6 +137,8 @@ export async function PATCH(
     title: string;
     speaker: string;
     topic: string;
+    seriesName: string;
+    tagsJson: string;
     clipsUnseen: number;
     updatedAt: number;
   }> = { updatedAt: Date.now() };
@@ -126,6 +146,21 @@ export async function PATCH(
   if (typeof body.title === "string" && body.title.trim()) updates.title = body.title.trim();
   if (typeof body.speaker === "string") updates.speaker = body.speaker.trim();
   if (typeof body.topic === "string" && body.topic.trim()) updates.topic = body.topic.trim();
+  if (typeof body.seriesName === "string") updates.seriesName = body.seriesName.trim().slice(0, 100);
+  if (typeof body.tags === "string") {
+    const clean = body.tags
+      .split(",")
+      .map((s: string) => s.trim().slice(0, 32))
+      .filter(Boolean)
+      .slice(0, 12);
+    updates.tagsJson = JSON.stringify(clean);
+  } else if (Array.isArray(body.tags)) {
+    const clean = body.tags
+      .filter((s: unknown): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s: string) => s.trim().slice(0, 32))
+      .slice(0, 12);
+    updates.tagsJson = JSON.stringify(clean);
+  }
   if (typeof body.clipsUnseen === "boolean") updates.clipsUnseen = body.clipsUnseen ? 1 : 0;
 
   db.update(sermons).set(updates).where(eq(sermons.id, id)).run();

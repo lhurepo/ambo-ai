@@ -23,6 +23,8 @@ export function NewSermonModal({
   const manuscriptInputRef = useRef<HTMLInputElement>(null);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState("");
+  const [seriesName, setSeriesName] = useState("");
+  const [tagsInput, setTagsInput] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [uploadingKind, setUploadingKind] = useState<
     "media" | "manuscript" | "youtube" | "sample" | null
@@ -40,6 +42,8 @@ export function NewSermonModal({
       fd.append("kind", kind);
       if (attachToSermonId) fd.append("sermonId", attachToSermonId);
       if (title.trim()) fd.append("title", title.trim());
+      if (seriesName.trim()) fd.append("seriesName", seriesName.trim());
+      if (tagsInput.trim()) fd.append("tags", tagsInput.trim());
 
       const res = await fetch("/api/sermons", { method: "POST", body: fd });
       const data = await res.json();
@@ -68,6 +72,8 @@ export function NewSermonModal({
         body: JSON.stringify({
           youtubeUrl: youtubeUrl.trim(),
           title: title.trim() || undefined,
+          seriesName: seriesName.trim() || undefined,
+          tags: tagsInput.trim() || undefined,
           sermonId: attachToSermonId || undefined,
         }),
       });
@@ -138,18 +144,48 @@ export function NewSermonModal({
         </div>
 
         {!attachToSermonId && (
-          <div className="mb-4">
-            <label htmlFor="sermon-title-input" className="mb-1.5 block text-xs font-medium text-[#4E6470]">
-              Title (optional)
-            </label>
-            <input
-              id="sermon-title-input"
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Defaults to YouTube or file title"
-              className="w-full rounded-xl border border-transparent bg-[#F3F5F7] px-3.5 py-2 text-sm text-[#0D1F28] placeholder-[#70848F] focus:border-[#D5E1E6] focus:bg-white focus:outline-none"
-            />
+          <div className="mb-4 space-y-2.5">
+            <div>
+              <label htmlFor="sermon-title-input" className="mb-1 block text-xs font-medium text-[#4E6470]">
+                Title (optional)
+              </label>
+              <input
+                id="sermon-title-input"
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Defaults to YouTube or file title"
+                className="w-full rounded-xl border border-transparent bg-[#F3F5F7] px-3.5 py-2 text-sm text-[#0D1F28] placeholder-[#70848F] focus:border-[#D5E1E6] focus:bg-white focus:outline-none"
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <div>
+                <label htmlFor="sermon-series-input" className="mb-1 block text-xs font-medium text-[#4E6470]">
+                  Sermon Series (optional)
+                </label>
+                <input
+                  id="sermon-series-input"
+                  type="text"
+                  value={seriesName}
+                  onChange={(e) => setSeriesName(e.target.value)}
+                  placeholder="e.g. Gospel of John"
+                  className="w-full rounded-xl border border-transparent bg-[#F3F5F7] px-3 py-1.5 text-xs text-[#0D1F28] placeholder-[#70848F] focus:border-[#D5E1E6] focus:bg-white focus:outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="sermon-tags-input" className="mb-1 block text-xs font-medium text-[#4E6470]">
+                  Tags (comma-separated)
+                </label>
+                <input
+                  id="sermon-tags-input"
+                  type="text"
+                  value={tagsInput}
+                  onChange={(e) => setTagsInput(e.target.value)}
+                  placeholder="e.g. Grace, Romans 8, Prayer"
+                  className="w-full rounded-xl border border-transparent bg-[#F3F5F7] px-3 py-1.5 text-xs text-[#0D1F28] placeholder-[#70848F] focus:border-[#D5E1E6] focus:bg-white focus:outline-none"
+                />
+              </div>
+            </div>
           </div>
         )}
 

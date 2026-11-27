@@ -124,6 +124,8 @@ export async function POST() {
         title: "Peace in the Middle of the Storm (Sample Sermon)",
         speaker: user.fullName || "Pastor",
         topic: "Peace & Trust",
+        seriesName: "Peace in Everyday Life",
+        tagsJson: JSON.stringify(["Matthew 11", "Romans 8", "Rest", "Prayer"]),
         sourceType: mediaCreated ? "both" : "manuscript",
         status: "queued",
         progress: 5,

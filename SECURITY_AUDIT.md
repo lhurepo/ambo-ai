@@ -19,7 +19,12 @@ Audited all routes, libraries, Python worker scripts, dependencies, and configur
 - **#3 Authentication & Session Controls**: PASSED — Passwords use per-user 16-byte random salt `scryptSync` + `timingSafeEqual`; session tokens use 32-byte random CSPRNG hex with `httpOnly`, `sameSite: "lax"`, `secure` in production, 30-day expiry, and stale session pruning (`src/lib/auth.ts`).
 - **#5 Injection / Unsanitized Input**: PASSED — Drizzle parameterized queries throughout; Python `subprocess` / `spawn` calls pass argument arrays (`shell: false`); YouTube links pass strict domain + 11-char video ID regex validation (`src/lib/youtube.ts`, `python-worker/download_youtube.py`); Claude CLI prompts pass via stdin (`src/lib/ai/provider.ts`); zero `eval`, `Function`, `exec`, or `dangerouslySetInnerHTML` calls.
 - **#6 Gitignore Coverage**: PASSED — `.gitignore` excludes `.env*`, `node_modules/`, `.next/`, `python-worker/.venv/`, `data/amboai.db*`, `data/*.key`, `*.key`, `*.pem`, `*.log`.
-- **#11 CORS Misconfiguration**: PASSED — No wildcard CORS headers; strict same-origin defaults plus `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff` in `next.config.ts`.
+- **#11 CORS Misconfiguration**: PASSED — No wildcard CORS headers; strict same-origin defaults plus `X-Frame-Options: SAMEORIGIN` (allowing local PDF live preview iframes) and `X-Content-Type-Options: nosniff` in `next.config.ts`.
+
+## Additional Controls for Ministry Exports, Launch Packs & Database Backup
+- **UUID & Ownership Enforcement**: All sermon/clip endpoints (`/api/sermons/[id]/captions`, `/api/sermons/[id]/waveform`, `/api/sermons/[id]/clips/batch`, `/api/sermons/[id]/launch-pack`, `/api/clips/[clipId]/thumbnail`) require an authenticated session, validate UUIDs via `isValidUuid`, and scope queries to `eq(sermons.userId, user.id)`.
+- **Path Containment**: Dated Sunday Launch Pack subfolders (`createDatedExportSubfolder`) resolve inside allowed home/`/Volumes`/`/tmp` roots via `validateAndResolveExportDir` & `isPathWithinAllowedExportRoots`, preventing path traversal on nested entries.
+- **Database Backup & Restore Hardening (`/api/system/backup`)**: Checks authentication, loopback `Origin` (`127.0.0.1` / `localhost`), rate-limits restores, validates uploaded SQLite magic bytes (`SQLite format 3\0`), runs `PRAGMA quick_check` and required-table schema checks on a read-only handle before restoring, and snapshots the prior database to `data/amboai.db.pre-restore.bak`.
 
 ## Remediations Applied During Audit
 - Removed unused `officeparser`, `mammoth`, and `zod` packages, eliminating transitive `pdfjs-dist`, `file-type`, and `zod` advisories.

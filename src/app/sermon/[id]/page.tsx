@@ -19,6 +19,7 @@ import {
   Mail,
   MessageSquareText,
   Mic,
+  Package,
   Plus,
   Share2,
 } from "lucide-react";
@@ -29,7 +30,12 @@ import { SermonChatPanel } from "@/components/sermon/SermonChatPanel";
 import { ClipStudio, type ClipItem } from "@/components/clips/ClipStudio";
 import { NewSermonModal } from "@/components/sermon/NewSermonModal";
 import { GardenPdfModal } from "@/components/sermon/GardenPdfModal";
-import { downloadMediaEndpoint, revealPathInFinder } from "@/lib/client-download";
+import {
+  downloadMediaEndpoint,
+  fetchExportPreferences,
+  revealPathInFinder,
+  saveBlobWithMode,
+} from "@/lib/client-download";
 import { useToast } from "@/components/ui/ToastProvider";
 import type { AssetType, FaceTrackData, TranscriptSegment } from "@/lib/types";
 
@@ -38,6 +44,9 @@ interface SermonDetail {
   title: string;
   speaker: string;
   topic: string;
+  seriesName?: string;
+  tags?: string[];
+  youtubeUrl?: string | null;
   sourceType: "media" | "manuscript" | "both";
   status: string;
   progress: number;
@@ -84,18 +93,24 @@ export default function SermonWorkspacePage() {
   const [socialSubTab, setSocialSubTab] = useState<
     "social_instagram" | "social_facebook" | "social_twitter" | "social_captions"
   >("social_instagram");
-  const [commSubTab, setCommSubTab] = useState<"email_recap" | "blog_post">("email_recap");
+  const [commSubTab, setCommSubTab] = useState<
+    "podcast_show_notes" | "email_recap" | "blog_post"
+  >("podcast_show_notes");
 
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [speakerDraft, setSpeakerDraft] = useState("");
   const [topicDraft, setTopicDraft] = useState("");
+  const [seriesDraft, setSeriesDraft] = useState("");
+  const [tagsDraft, setTagsDraft] = useState("");
   const [attachModal, setAttachModal] = useState<"media" | "manuscript" | null>(null);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [packingLaunch, setPackingLaunch] = useState(false);
   const [savedNotice, setSavedNotice] = useState<{ savedPath: string; displayPath: string } | null>(
     null
   );
+  const appliedDeepLinkRef = useRef(false);
 
   const mediaRef = useRef<HTMLVideoElement & HTMLAudioElement>(null);
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
@@ -115,6 +130,8 @@ export default function SermonWorkspacePage() {
     setTitleDraft(data.sermon.title);
     setSpeakerDraft(data.sermon.speaker || "");
     setTopicDraft(data.sermon.topic || "");
+    setSeriesDraft(data.sermon.seriesName || "");
+    setTagsDraft(Array.isArray(data.sermon.tags) ? data.sermon.tags.join(", ") : "");
     setAssets(data.assets || {});
     setClips(data.clips || []);
     setChatMessages(data.chatMessages || []);
@@ -161,16 +178,58 @@ export default function SermonWorkspacePage() {
     };
   }, [sermon?.status, sermonId, loadSermon]);
 
-  const seekTo = (seconds: number) => {
+  const seekTo = useCallback((seconds: number) => {
     const el = mediaRef.current;
     if (el) {
       el.currentTime = seconds;
       el.play().catch(() => {});
     }
-  };
+  }, []);
+
+  // Honor deep links like /sermon/<id>?t=84 or /sermon/<id>?tab=scripture cleanly after mount
+  useEffect(() => {
+    if (!sermon || appliedDeepLinkRef.current) return;
+    appliedDeepLinkRef.current = true;
+    const sp = new URLSearchParams(window.location.search);
+    const tabParam = sp.get("tab");
+    if (tabParam === "scripture" || tabParam === "quotes") {
+      setTopTab("sermon");
+      setSermonSubTab(tabParam);
+    }
+    const rawT = sp.get("t");
+    if (rawT !== null) {
+      const sec = Number(rawT);
+      if (!Number.isNaN(sec) && sec >= 0) {
+        if (sermon.hasMedia) {
+          setTopTab("sermon");
+          setSermonSubTab("transcript");
+        }
+        setCurrentTimeSec(sec);
+        const trySeek = () => {
+          const el = mediaRef.current;
+          if (!el) return;
+          if (el.readyState >= 1) {
+            el.currentTime = sec;
+          } else {
+            const onReady = () => {
+              el.currentTime = sec;
+              el.removeEventListener("loadedmetadata", onReady);
+            };
+            el.addEventListener("loadedmetadata", onReady);
+          }
+        };
+        setTimeout(trySeek, 100);
+      }
+    }
+  }, [sermon]);
 
   const handleSaveTitle = async () => {
     if (!titleDraft.trim()) return;
+    const cleanTags = tagsDraft
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 12);
     await fetch(`/api/sermons/${sermonId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -178,6 +237,8 @@ export default function SermonWorkspacePage() {
         title: titleDraft.trim(),
         speaker: speakerDraft.trim(),
         topic: topicDraft.trim() || undefined,
+        seriesName: seriesDraft.trim(),
+        tags: cleanTags,
       }),
     });
     setSermon((prev) =>
@@ -187,11 +248,57 @@ export default function SermonWorkspacePage() {
             title: titleDraft.trim(),
             speaker: speakerDraft.trim(),
             topic: topicDraft.trim() || prev.topic,
+            seriesName: seriesDraft.trim(),
+            tags: cleanTags,
           }
         : prev
     );
     setEditingTitle(false);
     success("Sermon details updated.");
+  };
+
+  const handleSundayLaunchPack = async () => {
+    setPackingLaunch(true);
+    setSavedNotice(null);
+    try {
+      const prefs = await fetchExportPreferences();
+      const saveToDisk =
+        prefs.exportMode === "folder" && Boolean(prefs.mediaExportDir || prefs.pdfExportDir);
+
+      const res = await fetch(`/api/sermons/${sermonId}/launch-pack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saveToDisk }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Could not create Sunday Launch Pack.");
+      }
+
+      if (saveToDisk) {
+        const saved = await res.json();
+        setSavedNotice({ savedPath: saved.savedPath, displayPath: saved.displayPath });
+        return;
+      }
+
+      const blob = await res.blob();
+      const slug =
+        sermon?.title
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/(^-|-$)/g, "") || "sermon";
+
+      await saveBlobWithMode({
+        blob,
+        fileName: `${slug}-sunday-launch-pack.zip`,
+        mimeType: "application/zip",
+        exportMode: prefs.exportMode,
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Could not export Launch Pack.");
+    } finally {
+      setPackingLaunch(false);
+    }
   };
 
   const handleDownloadMp3 = async () => {
@@ -314,7 +421,25 @@ export default function SermonWorkspacePage() {
                     onKeyDown={(e) => e.key === "Enter" && handleSaveTitle()}
                     aria-label="Topic"
                     placeholder="Topic"
+                    className="w-32 rounded-lg border border-[#D5E1E6] bg-white px-2.5 py-1 text-xs text-[#0D1F28] focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={seriesDraft}
+                    onChange={(e) => setSeriesDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSaveTitle()}
+                    aria-label="Sermon series"
+                    placeholder="Series"
                     className="w-36 rounded-lg border border-[#D5E1E6] bg-white px-2.5 py-1 text-xs text-[#0D1F28] focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={tagsDraft}
+                    onChange={(e) => setTagsDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSaveTitle()}
+                    aria-label="Tags comma separated"
+                    placeholder="Tags (comma-separated)"
+                    className="w-44 rounded-lg border border-[#D5E1E6] bg-white px-2.5 py-1 text-xs text-[#0D1F28] focus:outline-none"
                   />
                   <button
                     type="button"
@@ -340,11 +465,24 @@ export default function SermonWorkspacePage() {
                 </div>
               )}
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[#4E6470]">
+                {sermon.seriesName && (
+                  <span className="rounded-full bg-[#F4F2E6] px-2.5 py-0.5 text-[11px] font-medium text-[#1D3519]">
+                    Series: {sermon.seriesName}
+                  </span>
+                )}
                 {sermon.topic && (
                   <span className="rounded-full bg-[#EBF4F7] px-2.5 py-0.5 text-[11px] font-medium text-[#002A3C]">
                     {sermon.topic}
                   </span>
                 )}
+                {sermon.tags?.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full border border-[#E5EAEF] bg-white px-2 py-0.5 text-[10px] text-[#4E6470]"
+                  >
+                    #{tag}
+                  </span>
+                ))}
                 {sermon.speaker && <span>{sermon.speaker} ·</span>}
                 <span>
                   {new Date(sermon.createdAt).toLocaleDateString("en-US", {
@@ -397,6 +535,20 @@ export default function SermonWorkspacePage() {
             >
               <FileDown className="h-3.5 w-3.5 text-[#BDD630]" aria-hidden="true" />
               Garden PDF Packet
+            </button>
+            <button
+              type="button"
+              disabled={packingLaunch}
+              onClick={handleSundayLaunchPack}
+              title="Creates dated Sunday Launch folder (or .zip) with PDFs, Bulletin + Key, Podcast Show Notes, MP3, Captions & Top 3 Clips"
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#1D3519] bg-[#F4F2E6] px-3.5 py-1.5 text-xs font-medium text-[#1D3519] hover:bg-[#EAE6D3] disabled:opacity-60"
+            >
+              {packingLaunch ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Package className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {packingLaunch ? "Building Pack..." : "Sunday Launch Pack"}
             </button>
             <button
               type="button"
@@ -825,9 +977,13 @@ export default function SermonWorkspacePage() {
                 <div className="flex flex-wrap gap-1.5">
                   {(
                     [
+                      { id: "podcast_show_notes", label: "Podcast Show Notes" },
                       { id: "email_recap", label: "Email recap" },
                       { id: "blog_post", label: "Blog post" },
-                    ] as Array<{ id: "email_recap" | "blog_post"; label: string }>
+                    ] as Array<{
+                      id: "podcast_show_notes" | "email_recap" | "blog_post";
+                      label: string;
+                    }>
                   ).map((sub) => (
                     <button
                       key={sub.id}
@@ -846,7 +1002,13 @@ export default function SermonWorkspacePage() {
                 <AssetPanel
                   sermonId={sermonId}
                   assetType={commSubTab}
-                  title={commSubTab === "email_recap" ? "Weekly Email Recap" : "Sermon Blog Post"}
+                  title={
+                    commSubTab === "podcast_show_notes"
+                      ? "Spotify & Apple Podcast Show Notes"
+                      : commSubTab === "email_recap"
+                        ? "Weekly Email Recap"
+                        : "Sermon Blog Post"
+                  }
                   content={assets[commSubTab] || ""}
                   onUpdated={handleAssetUpdated}
                 />
@@ -868,6 +1030,7 @@ export default function SermonWorkspacePage() {
         open={pdfModalOpen}
         sermonId={sermonId}
         sermonTitle={sermon.title}
+        defaultQrUrl={sermon.youtubeUrl || ""}
         assets={assets}
         onClose={() => setPdfModalOpen(false)}
       />

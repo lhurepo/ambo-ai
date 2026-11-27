@@ -104,6 +104,13 @@ export const GENERATION_PROMPT_SLOTS: GenerationPromptSlot[] = [
     defaultPrompt: "2 punchy vertical video / Reel captions with a hook line and clear next step.",
   },
   {
+    key: "podcast_show_notes",
+    label: "Spotify & Apple Podcast Show Notes",
+    group: "Social & Comms",
+    defaultPrompt:
+      "Write ready-to-paste Spotify & Apple Podcasts show notes in Markdown with: 1) 2 compelling episode title options, 2) a warm 2–3 sentence episode description hook, 3) key Scriptures referenced, 4) clickable 00:00 chapter timestamps, and 5) a brief invitation to connect with The Garden Church in Boston.",
+  },
+  {
     key: "email_recap",
     label: "Weekly Email Recap",
     group: "Social & Comms",

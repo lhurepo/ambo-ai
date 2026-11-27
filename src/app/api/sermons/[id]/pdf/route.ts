@@ -124,7 +124,11 @@ export async function POST(
 
     let activeSections = sections;
 
-    if (activeDesign.useAiDesigner && settings.llmProvider !== "offline") {
+    const answerKeyMode = Boolean(body.answerKey);
+    const inlinePreview = Boolean(body.inlinePreview);
+    const runAiInPreview = Boolean(body.runAiInPreview);
+
+    if (activeDesign.useAiDesigner && settings.llmProvider !== "offline" && (!inlinePreview || runAiInPreview)) {
       const prompts = getEffectiveGenerationPrompts(user.id);
       const pdfPrompt =
         typeof body.pdfPrompt === "string" && body.pdfPrompt.trim()
@@ -168,6 +172,7 @@ export async function POST(
       documentTitle,
       sections: activeSections,
       includeNoteLines: Boolean(body.includeNoteLines),
+      answerKeyMode,
       design: activeDesign,
     });
 
@@ -176,9 +181,13 @@ export async function POST(
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)/g, "") || "sermon";
-    const fileName = `${slug}-garden-church.pdf`;
+    const fileName = answerKeyMode
+      ? `${slug}-leader-answer-key.pdf`
+      : activeDesign.fillInTheBlanks
+        ? `${slug}-sunday-bulletin.pdf`
+        : `${slug}-garden-church.pdf`;
 
-    if (body.saveToDisk === true && settings.pdfExportDir) {
+    if (!inlinePreview && body.saveToDisk === true && settings.pdfExportDir) {
       const saved = saveBufferToExportDir(settings.pdfExportDir, fileName, pdfBuf);
       return NextResponse.json({
         ok: true,
@@ -191,7 +200,7 @@ export async function POST(
       headers: {
         "Content-Type": "application/pdf",
         "Content-Length": String(pdfBuf.length),
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Content-Disposition": `${inlinePreview ? "inline" : "attachment"}; filename="${fileName}"`,
         "Cache-Control": "private, no-store",
       },
     });

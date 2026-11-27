@@ -13,6 +13,40 @@ import { assertSafeDataPath, isValidUuid, logAuditEvent, safeErrorResponse } fro
 const MAX_MEDIA_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
 const MAX_MANUSCRIPT_BYTES = 25 * 1024 * 1024; // 25 MB
 
+function parseTagsJson(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr)
+      ? arr.filter((t): t is string => typeof t === "string" && t.trim().length > 0).slice(0, 12)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeTagInput(raw: FormDataEntryValue | null): string[] {
+  if (!raw) return [];
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim().slice(0, 32))
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function makeSnippet(text: string, q: string, maxLen = 115): string {
+  const clean = text.replace(/[#*_>`]/g, "").replace(/\s+/g, " ").trim();
+  const idx = clean.toLowerCase().indexOf(q);
+  if (idx === -1) return clean.slice(0, maxLen) + (clean.length > maxLen ? "..." : "");
+  const start = Math.max(0, idx - 32);
+  const end = Math.min(clean.length, idx + q.length + 68);
+  return (
+    (start > 0 ? "..." : "") +
+    clean.slice(start, end).trim() +
+    (end < clean.length ? "..." : "")
+  );
+}
+
 export async function GET(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -21,6 +55,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const q = (searchParams.get("q") || "").trim().toLowerCase();
   const filter = searchParams.get("filter") || "all";
+  const seriesFilter = (searchParams.get("series") || "").trim();
 
   const rows = db
     .select({
@@ -28,6 +63,8 @@ export async function GET(req: Request) {
       title: sermons.title,
       speaker: sermons.speaker,
       topic: sermons.topic,
+      seriesName: sermons.seriesName,
+      tagsJson: sermons.tagsJson,
       sourceType: sermons.sourceType,
       status: sermons.status,
       progress: sermons.progress,
@@ -38,6 +75,9 @@ export async function GET(req: Request) {
       isVideo: sermons.isVideo,
       durationSec: sermons.durationSec,
       clipsUnseen: sermons.clipsUnseen,
+      transcriptText: sermons.transcriptText,
+      manuscriptText: sermons.manuscriptText,
+      segmentsJson: sermons.segmentsJson,
       createdAt: sermons.createdAt,
       updatedAt: sermons.updatedAt,
     })
@@ -46,23 +86,138 @@ export async function GET(req: Request) {
     .orderBy(desc(sermons.createdAt))
     .all();
 
-  const filtered = rows.filter((r) => {
-    if (filter === "media" && r.sourceType === "manuscript") return false;
-    if (filter === "manuscript" && r.sourceType === "media") return false;
-    if (q) {
-      const hay = `${r.title} ${r.topic} ${r.speaker} ${r.mediaFileName || ""} ${r.manuscriptFileName || ""}`.toLowerCase();
-      if (!hay.includes(q)) return false;
+  const allSeries = Array.from(
+    new Set(rows.map((r) => (r.seriesName || "").trim()).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+
+  // Batch clip counts in one query instead of N+1 per sermon
+  const clipCountMap = new Map<string, number>();
+  for (const c of db.select({ sermonId: clips.sermonId }).from(clips).all()) {
+    clipCountMap.set(c.sermonId, (clipCountMap.get(c.sermonId) || 0) + 1);
+  }
+
+  // Only load sermon_assets when performing a search query >= 2 chars
+  const assetsBySermon = new Map<string, Array<{ assetType: string; content: string }>>();
+  if (q.length >= 2) {
+    const sermonIdSet = new Set(rows.map((r) => r.id));
+    for (const a of db
+      .select({
+        sermonId: sermonAssets.sermonId,
+        assetType: sermonAssets.assetType,
+        content: sermonAssets.content,
+      })
+      .from(sermonAssets)
+      .all()) {
+      if (!sermonIdSet.has(a.sermonId)) continue;
+      const list = assetsBySermon.get(a.sermonId) || [];
+      list.push({ assetType: a.assetType, content: a.content });
+      assetsBySermon.set(a.sermonId, list);
     }
-    return true;
-  });
+  }
 
-  // Also attach clip count per sermon
-  const withCounts = filtered.map((s) => {
-    const clipCount = db.select({ id: clips.id }).from(clips).where(eq(clips.sermonId, s.id)).all().length;
-    return { ...s, clipCount };
-  });
+  type SearchMatch = {
+    kind: "transcript" | "scripture" | "quotes" | "notes";
+    snippet: string;
+    startSec: number | null;
+  };
 
-  return NextResponse.json({ sermons: withCounts });
+  const results = [];
+  for (const r of rows) {
+    if (filter === "media" && r.sourceType === "manuscript") continue;
+    if (filter === "manuscript" && r.sourceType === "media") continue;
+    if (seriesFilter && (r.seriesName || "").trim() !== seriesFilter) continue;
+
+    const tags = parseTagsJson(r.tagsJson);
+    const searchMatches: SearchMatch[] = [];
+
+    if (q) {
+      const metaHay = `${r.title} ${r.topic} ${r.speaker} ${r.seriesName} ${tags.join(" ")} ${
+        r.mediaFileName || ""
+      } ${r.manuscriptFileName || ""}`.toLowerCase();
+      let matched = metaHay.includes(q);
+
+      if (q.length >= 2) {
+        if (r.segmentsJson && r.segmentsJson.toLowerCase().includes(q)) {
+          try {
+            const segs = JSON.parse(r.segmentsJson) as Array<{ start: number; text: string }>;
+            for (const seg of segs) {
+              if (seg.text && seg.text.toLowerCase().includes(q)) {
+                searchMatches.push({
+                  kind: "transcript",
+                  snippet: makeSnippet(seg.text, q),
+                  startSec: Math.max(0, Math.floor(seg.start || 0)),
+                });
+                matched = true;
+                if (searchMatches.length >= 2) break;
+              }
+            }
+          } catch {}
+        } else if (r.transcriptText && r.transcriptText.toLowerCase().includes(q)) {
+          searchMatches.push({
+            kind: "transcript",
+            snippet: makeSnippet(r.transcriptText, q),
+            startSec: 0,
+          });
+          matched = true;
+        }
+
+        if (r.manuscriptText && r.manuscriptText.toLowerCase().includes(q) && searchMatches.length < 3) {
+          searchMatches.push({
+            kind: "notes",
+            snippet: makeSnippet(r.manuscriptText, q),
+            startSec: null,
+          });
+          matched = true;
+        }
+
+        const assetsList = assetsBySermon.get(r.id) || [];
+        for (const a of assetsList) {
+          if (searchMatches.length >= 3) break;
+          if (a.content.toLowerCase().includes(q)) {
+            const kind: SearchMatch["kind"] =
+              a.assetType === "scripture"
+                ? "scripture"
+                : a.assetType === "quotes"
+                  ? "quotes"
+                  : "notes";
+            searchMatches.push({
+              kind,
+              snippet: makeSnippet(a.content, q),
+              startSec: null,
+            });
+            matched = true;
+          }
+        }
+      }
+
+      if (!matched) continue;
+    }
+
+    results.push({
+      id: r.id,
+      title: r.title,
+      speaker: r.speaker,
+      topic: r.topic,
+      seriesName: r.seriesName || "",
+      tags,
+      sourceType: r.sourceType,
+      status: r.status,
+      progress: r.progress,
+      progressMessage: r.progressMessage,
+      errorMessage: r.errorMessage,
+      mediaFileName: r.mediaFileName,
+      manuscriptFileName: r.manuscriptFileName,
+      isVideo: r.isVideo,
+      durationSec: r.durationSec,
+      clipsUnseen: r.clipsUnseen,
+      clipCount: clipCountMap.get(r.id) || 0,
+      searchMatches,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    });
+  }
+
+  return NextResponse.json({ sermons: results, allSeries });
 }
 
 export async function POST(req: Request) {
@@ -77,6 +232,10 @@ export async function POST(req: Request) {
     const kind = String(formData.get("kind") || "auto"); // media | manuscript | auto
     const attachToId = formData.get("sermonId") ? String(formData.get("sermonId")) : null;
     const customTitle = formData.get("title") ? String(formData.get("title")).trim() : "";
+    const seriesName = formData.get("seriesName")
+      ? String(formData.get("seriesName")).trim().slice(0, 100)
+      : "";
+    const tags = normalizeTagInput(formData.get("tags"));
 
     if (!file) {
       return NextResponse.json({ error: "No file provided." }, { status: 400 });
@@ -185,6 +344,8 @@ export async function POST(req: Request) {
           title: cleanTitle,
           speaker: userSettings.defaultSpeaker || user.fullName || "",
           topic: "Analyzing...",
+          seriesName,
+          tagsJson: JSON.stringify(tags),
           sourceType: detectedKind,
           status: "queued",
           progress: 4,
