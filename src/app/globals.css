@@ -1,0 +1,283 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/fonts/PlusJakartaSans-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/fonts/PlusJakartaSans-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/fonts/PlusJakartaSans-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('/fonts/PlusJakartaSans-Bold.ttf') format('truetype');
+  font-weight: 700 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Poppins';
+  src: url('/fonts/Poppins.ttf') format('truetype');
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Merriweather';
+  src: url('/fonts/Merriweather.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Montserrat';
+  src: url('/fonts/Montserrat.ttf') format('truetype');
+  font-weight: 700 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Raleway';
+  src: url('/fonts/Raleway.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Bebas Neue';
+  src: url('/fonts/BebasNeue.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Fredoka';
+  src: url('/fonts/Fredoka.ttf') format('truetype');
+  font-weight: 600 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Work Sans';
+  src: url('/fonts/WorkSans.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Libre Baskerville';
+  src: url('/fonts/LibreBaskerville.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Courier Prime';
+  src: url('/fonts/CourierPrime.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Resolve Compressed';
+  src: url('/fonts/Resolve-BoldCm.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Yankee';
+  src: url('/fonts/Yankee-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Yankee';
+  src: url('/fonts/Yankee-RegularIt.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Yankee';
+  src: url('/fonts/Yankee-Medium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Yankee';
+  src: url('/fonts/Yankee-SemiBold.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Yankee';
+  src: url('/fonts/Yankee-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Yankee';
+  src: url('/fonts/Yankee-ExtraBold.otf') format('opentype');
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-jakarta: 'Plus Jakarta Sans';
+  --font-poppins: 'Poppins';
+  --font-merriweather: 'Merriweather';
+  --font-montserrat: 'Montserrat';
+  --font-raleway: 'Raleway';
+  --font-bebas: 'Bebas Neue';
+  --font-fredoka: 'Fredoka';
+  --font-work-sans: 'Work Sans';
+  --font-libre-baskerville: 'Libre Baskerville';
+  --font-courier-prime: 'Courier Prime';
+  --font-resolve: 'Resolve Compressed';
+  --font-yankee: 'Yankee';
+
+  --ambo-bg: #F7F8FA;
+  --ambo-card: #FFFFFF;
+  --ambo-surface: #EBF4F7;
+  --ambo-input: #F3F5F7;
+  --ambo-navy: #002A3C;
+  --ambo-navy-hover: #0B435B;
+  --ambo-navy-dark: #001B27;
+  --ambo-teal: #2A7B96;
+  --ambo-text: #0D1F28;
+  --ambo-text-muted: #4E6470;
+  --ambo-border: #E5EAEF;
+  --ambo-border-strong: #D5E1E6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background-color: var(--ambo-bg);
+  color: var(--ambo-text);
+  font-family: var(--font-jakarta), 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button:not(:disabled),
+a[href],
+select:not(:disabled),
+summary {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ambo-navy);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Clean light scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 42, 60, 0.16);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 42, 60, 0.28);
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Light prose typography */
+.ambo-prose {
+  color: #1F323C;
+  line-height: 1.72;
+  font-size: 0.9375rem;
+}
+.ambo-prose h1,
+.ambo-prose h2,
+.ambo-prose h3,
+.ambo-prose h4 {
+  color: #0D1F28;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin-top: 1.35em;
+  margin-bottom: 0.5em;
+}
+.ambo-prose h1:first-child,
+.ambo-prose h2:first-child,
+.ambo-prose h3:first-child {
+  margin-top: 0;
+}
+.ambo-prose h2 {
+  font-size: 1.075rem;
+}
+.ambo-prose h3 {
+  font-size: 0.95rem;
+  color: #002A3C;
+}
+.ambo-prose p {
+  margin-bottom: 0.85em;
+}
+.ambo-prose ul,
+.ambo-prose ol {
+  padding-left: 1.35rem;
+  margin-bottom: 0.85em;
+}
+.ambo-prose li {
+  margin-bottom: 0.35em;
+}
+.ambo-prose strong {
+  color: #0D1F28;
+  font-weight: 600;
+}
+.ambo-prose blockquote {
+  border-left: 3px solid #D5E1E6;
+  padding-left: 0.95rem;
+  color: #4E6470;
+  font-style: italic;
+  margin: 0.9rem 0;
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Ambo AI",
+  "short_name": "Ambo AI",
+  "description": "Turn one sermon into 20+ ministry resources — 100% free and local.",
+  "icons": [
+    { "src": "/android-chrome-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/android-chrome-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#002A3C",
+  "background_color": "#001B27",
+  "display": "standalone"
+}

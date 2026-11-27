@@ -1,0 +1,39 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service-account*.json
+
+# Dependencies & build artifacts
+node_modules/
+package-lock.json
+.next/
+.next.bak/
+dist/
+build/
+.nuxt/
+tsconfig.tsbuildinfo
+__pycache__/
+*.py[cod]
+venv/
+python-worker/.venv/
+
+# User runtime data (keep fonts)
+data/*
+!data/fonts/
+!data/fonts/**
+
+# OS, IDE, dev tooling & large local brand archives
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+*.log
+The Garden Brand Presentation.pdf
+*License*.zip
+ambo-ai-brand-pack/
+design-system/
