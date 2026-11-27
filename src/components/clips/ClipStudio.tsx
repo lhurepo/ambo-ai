@@ -3,9 +3,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
+  ChevronDown,
+  ChevronUp,
   Download,
   Edit3,
   Film,
+  FolderOpen,
   Loader2,
   Pause,
   Play,
@@ -15,8 +18,9 @@ import {
   Type,
 } from "lucide-react";
 import {
-  CAPTION_PRESETS,
   DEFAULT_CAPTION_SETTINGS,
+  FONT_OPTIONS,
+  OVERLAY_COLOR_THEMES,
   type AspectRatio,
   type CaptionBgStyle,
   type CaptionPosition,
@@ -25,6 +29,7 @@ import {
   type FaceTrackData,
   type TranscriptSegment,
 } from "@/lib/types";
+import { downloadMediaEndpoint, revealPathInFinder } from "@/lib/client-download";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { useToast } from "@/components/ui/ToastProvider";
 
@@ -71,6 +76,44 @@ function fmtMs(ms: number): string {
   return `${m}:${String(rem).padStart(2, "0")}`;
 }
 
+function ToggleRow({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex w-full items-center justify-between gap-3 rounded-xl border border-[#EDF1F4] bg-[#FAFBFD] px-3 py-2.5 text-left transition hover:bg-[#F3F5F7]"
+    >
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-[#0D1F28]">{label}</p>
+        {hint && <p className="text-[11px] text-[#4E6470]">{hint}</p>}
+      </div>
+      <span
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition ${
+          checked ? "bg-[#1D3519]" : "bg-[#D5E1E6]"
+        }`}
+      >
+        <span
+          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${
+            checked ? "translate-x-[18px]" : "translate-x-[3px]"
+          }`}
+        />
+      </span>
+    </button>
+  );
+}
+
 export function ClipStudio({
   sermonId,
   mediaUrl,
@@ -93,6 +136,10 @@ export function ClipStudio({
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [applyToAllMsg, setApplyToAllMsg] = useState<string | null>(null);
+  const [showCustomColors, setShowCustomColors] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<{ savedPath: string; displayPath: string } | null>(
+    null
+  );
 
   const [deleteTarget, setDeleteTarget] = useState<ClipItem | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -118,10 +165,16 @@ export function ClipStudio({
 
   useEffect(() => {
     if (activeClip) {
-      setStyle({ ...DEFAULT_CAPTION_SETTINGS, ...(activeClip.captionSettings || {}) });
+      setStyle({
+        ...DEFAULT_CAPTION_SETTINGS,
+        ...(activeClip.captionSettings || {}),
+        showCaptions: activeClip.captionSettings?.showCaptions ?? true,
+        uppercase: activeClip.captionSettings?.uppercase ?? false,
+      });
       setTitleDraft(activeClip.title);
       setPlayTimeSec(activeClip.startMs / 1000);
       setEditingWord(null);
+      setSavedNotice(null);
       if (videoRef.current) {
         videoRef.current.currentTime = activeClip.startMs / 1000;
         videoRef.current.pause();
@@ -309,6 +362,7 @@ export function ClipStudio({
   const handleRenderAndDownload = async () => {
     if (!activeClip) return;
     setRenderingId(activeClip.id);
+    setSavedNotice(null);
     try {
       const res = await fetch(`/api/clips/${activeClip.id}/render`, { method: "POST" });
       if (!res.ok) {
@@ -316,16 +370,30 @@ export function ClipStudio({
         throw new Error(d.error || "Clip rendering failed");
       }
       onClipsChanged();
-      const a = document.createElement("a");
-      a.href = `/api/clips/${activeClip.id}/download`;
-      a.download = `${activeClip.title}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      await downloadMediaEndpoint({
+        endpointUrl: `/api/clips/${activeClip.id}/download`,
+        fileName: `${activeClip.title}.mp4`,
+        mimeType: "video/mp4",
+        onSavedToFolder: (info) => setSavedNotice(info),
+      });
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Render failed.");
     } finally {
       setRenderingId(null);
+    }
+  };
+
+  const handleDownloadAllZip = async () => {
+    setSavedNotice(null);
+    try {
+      await downloadMediaEndpoint({
+        endpointUrl: `/api/sermons/${sermonId}/clips/download-all`,
+        fileName: "sermon-clips-pack.zip",
+        mimeType: "application/zip",
+        onSavedToFolder: (info) => setSavedNotice(info),
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Zip export failed.");
     }
   };
 
@@ -335,8 +403,8 @@ export function ClipStudio({
     return c.category === catFilter;
   });
 
-  const activePreset =
-    CAPTION_PRESETS.find((p) => p.typography === style.typography) || CAPTION_PRESETS[0];
+  const activeFont =
+    FONT_OPTIONS.find((f) => f.id === style.typography) || FONT_OPTIONS[0];
 
   const togglePlay = () => {
     const el = videoRef.current;
@@ -359,6 +427,8 @@ export function ClipStudio({
       : style.aspectRatio === "16:9"
         ? "aspect-video w-full max-w-[340px]"
         : "aspect-[9/16] w-full max-w-[235px]";
+
+  const captionsVisible = style.showCaptions !== false;
 
   return (
     <div className="space-y-4">
@@ -403,16 +473,34 @@ export function ClipStudio({
             Find more clips
           </button>
           {clips.length > 0 && (
-            <a
-              href={`/api/sermons/${sermonId}/clips/download-all`}
+            <button
+              type="button"
+              onClick={handleDownloadAllZip}
               className="inline-flex items-center gap-1.5 rounded-full bg-[#002A3C] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#0B435B]"
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               Download all (.zip)
-            </a>
+            </button>
           )}
         </div>
       </div>
+
+      {savedNotice && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#D5E1E6] bg-[#F4F2E6]/70 px-4 py-2.5 text-xs text-[#1D3519]">
+          <span className="inline-flex items-center gap-1.5 font-medium">
+            <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Saved to <code className="font-mono">{savedNotice.displayPath}</code>
+          </span>
+          <button
+            type="button"
+            onClick={() => void revealPathInFinder(savedNotice.savedPath)}
+            className="inline-flex items-center gap-1 rounded-full border border-[#D5E1E6] bg-white px-3 py-1 text-[11px] font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
+          >
+            <FolderOpen className="h-3 w-3" aria-hidden="true" />
+            Show in Finder
+          </button>
+        </div>
+      )}
 
       {clips.length === 0 ? (
         <div className="rounded-2xl border border-[#E5EAEF] bg-white p-10 text-center">
@@ -528,55 +616,60 @@ export function ClipStudio({
                     </div>
                   )}
 
-                  <div
-                    className={`pointer-events-none absolute inset-x-3 flex justify-center ${
-                      style.position === "top"
-                        ? "top-10"
-                        : style.position === "bottom"
-                          ? "bottom-12"
-                          : "top-1/2 -translate-y-1/2"
-                    }`}
-                  >
+                  {captionsVisible && (
                     <div
-                      className={`max-w-full rounded-xl px-3 py-1.5 text-center font-bold leading-tight ${activePreset.fontClass} ${
-                        style.captionSize === "small"
-                          ? "text-sm"
-                          : style.captionSize === "large"
-                            ? "text-xl"
-                            : "text-base"
+                      className={`pointer-events-none absolute inset-x-3 flex justify-center ${
+                        style.position === "top"
+                          ? "top-10"
+                          : style.position === "bottom"
+                            ? "bottom-12"
+                            : "top-1/2 -translate-y-1/2"
                       }`}
-                      style={{
-                        backgroundColor:
-                          style.backgroundStyle === "background"
-                            ? style.backgroundColorHex
-                            : "transparent",
-                        textShadow:
-                          style.backgroundStyle === "border"
-                            ? `0 0 8px ${style.backgroundColorHex}, 0 2px 6px rgba(0,0,0,0.9)`
-                            : style.backgroundStyle === "none"
-                              ? "0 2px 8px rgba(0,0,0,0.95)"
-                              : "none",
-                        WebkitTextStroke:
-                          style.backgroundStyle === "border"
-                            ? `1px ${style.backgroundColorHex}`
-                            : undefined,
-                      }}
                     >
-                      {activeChunk.map((w) => {
-                        const activeWord =
-                          style.highlights && playTimeSec >= w.start && playTimeSec <= w.end;
-                        return (
-                          <span
-                            key={w.id}
-                            className="mx-0.5 inline-block transition-colors duration-75"
-                            style={{ color: activeWord ? style.highlightColorHex : style.colorHex }}
-                          >
-                            {w.word}
-                          </span>
-                        );
-                      })}
+                      <div
+                        className={`max-w-full rounded-xl px-3 py-1.5 text-center font-bold leading-tight ${
+                          style.uppercase ? "uppercase" : ""
+                        } ${
+                          style.captionSize === "small"
+                            ? "text-sm"
+                            : style.captionSize === "large"
+                              ? "text-xl"
+                              : "text-base"
+                        }`}
+                        style={{
+                          fontFamily: activeFont.fontFamilyCss,
+                          backgroundColor:
+                            style.backgroundStyle === "background"
+                              ? style.backgroundColorHex
+                              : "transparent",
+                          textShadow:
+                            style.backgroundStyle === "border"
+                              ? `0 0 8px ${style.backgroundColorHex}, 0 2px 6px rgba(0,0,0,0.9)`
+                              : style.backgroundStyle === "none"
+                                ? "0 2px 8px rgba(0,0,0,0.95)"
+                                : "none",
+                          WebkitTextStroke:
+                            style.backgroundStyle === "border"
+                              ? `1px ${style.backgroundColorHex}`
+                              : undefined,
+                        }}
+                      >
+                        {activeChunk.map((w) => {
+                          const activeWord =
+                            style.highlights && playTimeSec >= w.start && playTimeSec <= w.end;
+                          return (
+                            <span
+                              key={w.id}
+                              className="mx-0.5 inline-block transition-colors duration-75"
+                              style={{ color: activeWord ? style.highlightColorHex : style.colorHex }}
+                            >
+                              {w.word}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <button
                     type="button"
@@ -620,7 +713,7 @@ export function ClipStudio({
                                 value: w.word,
                               })
                             }
-                            className="rounded bg-white px-1.5 py-0.5 text-[#0D1F28] border border-[#E5EAEF] hover:border-[#002A3C]"
+                            className="rounded border border-[#E5EAEF] bg-white px-1.5 py-0.5 text-[#0D1F28] hover:border-[#002A3C]"
                           >
                             {w.word}
                           </button>
@@ -738,42 +831,92 @@ export function ClipStudio({
             {activeClip && (
               <div className="min-w-0 space-y-4 rounded-2xl border border-[#E5EAEF] bg-white p-5 md:col-span-6">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-semibold text-[#0D1F28]">Caption style</h4>
+                  <h4 className="text-sm font-semibold text-[#0D1F28]">Overlay &amp; Caption Studio</h4>
                   {savingStyle && <span className="text-xs text-[#4E6470]">Saving...</span>}
                 </div>
 
+                {/* Overlay Color Theme (Garden Church default first, decoupled from font) */}
                 <div>
                   <p className="mb-2 text-xs font-medium text-[#4E6470]">
-                    Presets (Garden Church fonts first)
+                    Overlay Color Theme (Garden Church default)
                   </p>
-                  <div className="grid grid-cols-3 gap-2">
-                    {CAPTION_PRESETS.map((preset) => {
-                      const selected = style.typography === preset.typography;
+                  <div className="flex flex-wrap gap-1.5">
+                    {OVERLAY_COLOR_THEMES.map((theme) => {
+                      const active =
+                        style.backgroundColorHex.toLowerCase() ===
+                          theme.backgroundColorHex.toLowerCase() &&
+                        style.highlightColorHex.toLowerCase() ===
+                          theme.highlightColorHex.toLowerCase() &&
+                        style.backgroundStyle === theme.backgroundStyle;
                       return (
                         <button
-                          key={preset.typography}
+                          key={theme.id}
                           type="button"
                           onClick={() =>
                             persistStyle({
                               ...style,
-                              typography: preset.typography,
-                              colorHex: preset.colorHex,
-                              backgroundStyle: preset.backgroundStyle,
-                              backgroundColorHex: preset.backgroundColorHex,
-                              highlights: preset.highlights,
-                              highlightColorHex: preset.highlightColorHex,
+                              colorHex: theme.colorHex,
+                              backgroundStyle: theme.backgroundStyle,
+                              backgroundColorHex: theme.backgroundColorHex,
+                              highlights: theme.highlights,
+                              highlightColorHex: theme.highlightColorHex,
                             })
                           }
-                          className={`rounded-xl border px-2 py-2 text-center transition ${
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                            active
+                              ? "border-[#1D3519] bg-[#F4F2E6] text-[#1D3519]"
+                              : "border-[#E5EAEF] bg-[#FAFBFD] text-[#0D1F28] hover:bg-[#F3F5F7]"
+                          }`}
+                        >
+                          <span className="flex items-center gap-0.5">
+                            <span
+                              className="h-3 w-3 rounded-full border border-black/15"
+                              style={{ backgroundColor: theme.backgroundColorHex }}
+                            />
+                            <span
+                              className="h-3 w-3 rounded-full border border-black/15"
+                              style={{ backgroundColor: theme.highlightColorHex }}
+                            />
+                          </span>
+                          {theme.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Distinct Working Font Picker (decoupled from colors!) */}
+                <div>
+                  <p className="mb-2 text-xs font-medium text-[#4E6470]">
+                    Caption Font (each preview uses its real typeface)
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {FONT_OPTIONS.map((fontOpt) => {
+                      const selected = style.typography === fontOpt.id;
+                      return (
+                        <button
+                          key={fontOpt.id}
+                          type="button"
+                          onClick={() =>
+                            persistStyle({
+                              ...style,
+                              typography: fontOpt.id,
+                            })
+                          }
+                          className={`rounded-xl border px-2.5 py-2 text-left transition ${
                             selected
-                              ? "border-[#002A3C] bg-[#EBF4F7] text-[#002A3C]"
+                              ? "border-[#1D3519] bg-[#F4F2E6]/70 text-[#1D3519]"
                               : "border-[#E5EAEF] bg-[#FAFBFD] text-[#0D1F28] hover:bg-[#F3F5F7]"
                           }`}
                         >
                           <span
-                            className={`block truncate text-[11px] font-semibold tracking-normal ${preset.fontClass}`}
+                            className="block truncate text-sm font-bold leading-snug"
+                            style={{ fontFamily: fontOpt.fontFamilyCss }}
                           >
-                            {preset.label}
+                            {fontOpt.label}
+                          </span>
+                          <span className="block text-[10px] text-[#70848F]">
+                            {fontOpt.category}
                           </span>
                         </button>
                       );
@@ -781,6 +924,7 @@ export function ClipStudio({
                   </div>
                 </div>
 
+                {/* Aspect, Position & Size */}
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   <div>
                     <label htmlFor="clip-aspect" className="block text-[11px] font-medium text-[#4E6470]">
@@ -835,114 +979,131 @@ export function ClipStudio({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  <div>
-                    <label htmlFor="clip-text-color" className="block text-[11px] font-medium text-[#4E6470]">
-                      Text color
-                    </label>
-                    <input
-                      id="clip-text-color"
-                      type="color"
-                      value={style.colorHex}
-                      onChange={(e) => persistStyle({ ...style, colorHex: e.target.value })}
-                      className="mt-1 h-8 w-full cursor-pointer rounded-lg border border-[#E5EAEF] bg-white p-0.5"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="clip-bg-style" className="block truncate text-[11px] font-medium text-[#4E6470]">
-                      Bg style
-                    </label>
-                    <select
-                      id="clip-bg-style"
-                      value={style.backgroundStyle}
-                      onChange={(e) =>
-                        persistStyle({ ...style, backgroundStyle: e.target.value as CaptionBgStyle })
-                      }
-                      className="mt-1 h-8 w-full rounded-lg border border-transparent bg-[#F3F5F7] px-2 text-[#0D1F28]"
-                    >
-                      <option value="none">None</option>
-                      <option value="background">Fill Box</option>
-                      <option value="border">Outline</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="clip-bg-color" className="block text-[11px] font-medium text-[#4E6470]">
-                      Bg color
-                    </label>
-                    <input
-                      id="clip-bg-color"
-                      type="color"
-                      value={style.backgroundColorHex}
-                      onChange={(e) =>
-                        persistStyle({ ...style, backgroundColorHex: e.target.value })
-                      }
-                      className="mt-1 h-8 w-full cursor-pointer rounded-lg border border-[#E5EAEF] bg-white p-0.5"
-                    />
-                  </div>
+                {/* Intuitive Switches */}
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <ToggleRow
+                    label="Show Captions"
+                    hint="Overlay text on clip"
+                    checked={captionsVisible}
+                    onChange={(v) => persistStyle({ ...style, showCaptions: v })}
+                  />
+                  <ToggleRow
+                    label="ALL CAPS"
+                    hint="Uppercase text"
+                    checked={Boolean(style.uppercase)}
+                    onChange={(v) => persistStyle({ ...style, uppercase: v })}
+                  />
+                  <ToggleRow
+                    label="Word Highlight"
+                    hint="Karaoke word sweep"
+                    checked={style.highlights}
+                    onChange={(v) => persistStyle({ ...style, highlights: v })}
+                  />
+                  <ToggleRow
+                    label="Face Framing"
+                    hint="Keep speaker centered"
+                    checked={style.facialTracking}
+                    onChange={(v) => persistStyle({ ...style, facialTracking: v })}
+                  />
                 </div>
 
-                {/* Garden Brand Quick Swatches */}
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#EDF1F4] bg-[#FAFBFD] px-3 py-2">
-                  <span className="text-[11px] font-medium text-[#4E6470]">Garden swatches (highlight)</span>
-                  <div className="flex items-center gap-1.5">
-                    {GARDEN_SWATCHES.map((sw) => (
-                      <button
-                        key={sw.hex}
-                        type="button"
-                        title={sw.label}
-                        aria-label={`Set highlight color ${sw.label}`}
-                        onClick={() => persistStyle({ ...style, highlightColorHex: sw.hex })}
-                        className="h-5 w-5 rounded-full border border-[#D5E1E6]"
-                        style={{ backgroundColor: sw.hex }}
-                      />
-                    ))}
-                  </div>
-                </div>
+                {/* Collapsible Custom Colors & Box Style */}
+                <div className="rounded-xl border border-[#EDF1F4] bg-[#FAFBFD]">
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomColors((v) => !v)}
+                    className="flex w-full items-center justify-between px-3.5 py-2.5 text-xs font-medium text-[#0D1F28]"
+                  >
+                    <span>Custom colors &amp; box style</span>
+                    {showCustomColors ? (
+                      <ChevronUp className="h-3.5 w-3.5 text-[#4E6470]" aria-hidden="true" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 text-[#4E6470]" aria-hidden="true" />
+                    )}
+                  </button>
 
-                <div className="rounded-xl border border-[#EDF1F4] bg-[#FAFBFD] p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-medium text-[#0D1F28]">Karaoke highlighting</p>
-                      <p className="text-[11px] text-[#4E6470]">Words highlight while spoken</p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={style.highlights}
-                      aria-label="Enable karaoke highlighting"
-                      onChange={(e) => persistStyle({ ...style, highlights: e.target.checked })}
-                      className="h-4 w-4 accent-[#002A3C]"
-                    />
-                  </div>
-                  {style.highlights && (
-                    <div className="mt-2.5 flex items-center justify-between text-xs">
-                      <label htmlFor="clip-highlight-color" className="text-[#4E6470]">
-                        Highlight color
-                      </label>
-                      <input
-                        id="clip-highlight-color"
-                        type="color"
-                        value={style.highlightColorHex}
-                        onChange={(e) =>
-                          persistStyle({ ...style, highlightColorHex: e.target.value })
-                        }
-                        className="h-7 w-14 cursor-pointer rounded border border-[#E5EAEF] bg-white p-0.5"
-                      />
+                  {showCustomColors && (
+                    <div className="space-y-3 border-t border-[#EDF1F4] px-3.5 py-3">
+                      <div className="grid grid-cols-2 gap-2.5 text-xs sm:grid-cols-4">
+                        <div>
+                          <label htmlFor="clip-text-color" className="block text-[11px] font-medium text-[#4E6470]">
+                            Text
+                          </label>
+                          <input
+                            id="clip-text-color"
+                            type="color"
+                            value={style.colorHex}
+                            onChange={(e) => persistStyle({ ...style, colorHex: e.target.value })}
+                            className="mt-1 h-8 w-full cursor-pointer rounded-lg border border-[#E5EAEF] bg-white p-0.5"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="clip-bg-style" className="block truncate text-[11px] font-medium text-[#4E6470]">
+                            Box style
+                          </label>
+                          <select
+                            id="clip-bg-style"
+                            value={style.backgroundStyle}
+                            onChange={(e) =>
+                              persistStyle({ ...style, backgroundStyle: e.target.value as CaptionBgStyle })
+                            }
+                            className="mt-1 h-8 w-full rounded-lg border border-[#E5EAEF] bg-white px-2 text-[#0D1F28]"
+                          >
+                            <option value="background">Fill Box</option>
+                            <option value="border">Outline</option>
+                            <option value="none">Shadow Only</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label htmlFor="clip-bg-color" className="block text-[11px] font-medium text-[#4E6470]">
+                            Box / Edge
+                          </label>
+                          <input
+                            id="clip-bg-color"
+                            type="color"
+                            value={style.backgroundColorHex}
+                            onChange={(e) =>
+                              persistStyle({ ...style, backgroundColorHex: e.target.value })
+                            }
+                            className="mt-1 h-8 w-full cursor-pointer rounded-lg border border-[#E5EAEF] bg-white p-0.5"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="clip-highlight-color" className="block text-[11px] font-medium text-[#4E6470]">
+                            Highlight
+                          </label>
+                          <input
+                            id="clip-highlight-color"
+                            type="color"
+                            value={style.highlightColorHex}
+                            onChange={(e) =>
+                              persistStyle({ ...style, highlightColorHex: e.target.value })
+                            }
+                            className="mt-1 h-8 w-full cursor-pointer rounded-lg border border-[#E5EAEF] bg-white p-0.5"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[11px] font-medium text-[#4E6470]">
+                          Garden swatches (highlight)
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {GARDEN_SWATCHES.map((sw) => (
+                            <button
+                              key={sw.hex}
+                              type="button"
+                              title={sw.label}
+                              aria-label={`Set highlight color ${sw.label}`}
+                              onClick={() => persistStyle({ ...style, highlightColorHex: sw.hex })}
+                              className="h-5 w-5 rounded-full border border-[#D5E1E6]"
+                              style={{ backgroundColor: sw.hex }}
+                            />
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   )}
-                </div>
-
-                <div className="flex items-center justify-between rounded-xl border border-[#EDF1F4] bg-[#FAFBFD] p-3">
-                  <div>
-                    <p className="text-xs font-medium text-[#0D1F28]">Facial tracking</p>
-                    <p className="text-[11px] text-[#4E6470]">Keep speaker centered in 9:16</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={style.facialTracking}
-                    aria-label="Enable facial tracking"
-                    onChange={(e) => persistStyle({ ...style, facialTracking: e.target.checked })}
-                    className="h-4 w-4 accent-[#002A3C]"
-                  />
                 </div>
 
                 <button

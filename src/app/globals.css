@@ -26,7 +26,7 @@
 @font-face {
   font-family: 'Plus Jakarta Sans';
   src: url('/fonts/PlusJakartaSans-Bold.ttf') format('truetype');
-  font-weight: 700 800;
+  font-weight: 700 900;
   font-style: normal;
   font-display: swap;
 }
@@ -34,70 +34,70 @@
 @font-face {
   font-family: 'Poppins';
   src: url('/fonts/Poppins.ttf') format('truetype');
-  font-weight: 600 700;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Merriweather';
   src: url('/fonts/Merriweather.ttf') format('truetype');
-  font-weight: 700;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Montserrat';
   src: url('/fonts/Montserrat.ttf') format('truetype');
-  font-weight: 700 800;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Raleway';
   src: url('/fonts/Raleway.ttf') format('truetype');
-  font-weight: 700;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Bebas Neue';
   src: url('/fonts/BebasNeue.ttf') format('truetype');
-  font-weight: 400;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Fredoka';
   src: url('/fonts/Fredoka.ttf') format('truetype');
-  font-weight: 600 700;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Work Sans';
   src: url('/fonts/WorkSans.ttf') format('truetype');
-  font-weight: 700;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Libre Baskerville';
   src: url('/fonts/LibreBaskerville.ttf') format('truetype');
-  font-weight: 700;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Courier Prime';
   src: url('/fonts/CourierPrime.ttf') format('truetype');
-  font-weight: 700;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'Resolve Compressed';
   src: url('/fonts/Resolve-BoldCm.otf') format('opentype');
-  font-weight: 700;
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
@@ -139,7 +139,7 @@
 @font-face {
   font-family: 'Yankee';
   src: url('/fonts/Yankee-ExtraBold.otf') format('opentype');
-  font-weight: 800;
+  font-weight: 800 900;
   font-style: normal;
   font-display: swap;
 }
@@ -172,6 +172,18 @@
   --ambo-border-strong: #D5E1E6;
 }
 
+html.dark {
+  color-scheme: dark;
+  --ambo-bg: #0B1419;
+  --ambo-card: #111E26;
+  --ambo-surface: #162B36;
+  --ambo-input: #172832;
+  --ambo-text: #EBF2F6;
+  --ambo-text-muted: #93ABB8;
+  --ambo-border: #1F3340;
+  --ambo-border-strong: #284152;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -194,6 +206,10 @@ summary {
 :focus-visible {
   outline: 2px solid var(--ambo-navy);
   outline-offset: 2px;
+}
+
+html.dark :focus-visible {
+  outline-color: #6FB3C8;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -221,6 +237,13 @@ summary {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 42, 60, 0.28);
+}
+
+html.dark ::-webkit-scrollbar-thumb {
+  background: rgba(111, 179, 200, 0.22);
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(111, 179, 200, 0.36);
 }
 
 .scrollbar-hide::-webkit-scrollbar {
@@ -280,4 +303,138 @@ summary {
   color: #4E6470;
   font-style: italic;
   margin: 0.9rem 0;
+}
+
+/* Dark mode semantic palette overrides */
+html.dark body {
+  background-color: #0B1419 !important;
+  color: #EBF2F6 !important;
+}
+html.dark .bg-\[\#F7F8FA\] {
+  background-color: #0B1419 !important;
+}
+html.dark .bg-white {
+  background-color: #111E26 !important;
+}
+html.dark .bg-\[\#FAFBFD\] {
+  background-color: #14242D !important;
+}
+html.dark .bg-\[\#F3F5F7\] {
+  background-color: #172832 !important;
+}
+html.dark .bg-\[\#EBF4F7\] {
+  background-color: #162F3D !important;
+}
+html.dark .bg-\[\#DDECF1\] {
+  background-color: #1D3B4D !important;
+}
+html.dark .bg-\[\#F4F2E6\],
+html.dark .bg-\[\#F4F2E6\]\/70,
+html.dark .bg-\[\#F4F2E6\]\/60,
+html.dark .bg-\[\#F4F2E6\]\/50 {
+  background-color: #1B291B !important;
+}
+html.dark .hover\:bg-\[\#F3F5F7\]:hover,
+html.dark .hover\:bg-\[\#F7F8FA\]:hover,
+html.dark .hover\:bg-\[\#FAFBFD\]:hover {
+  background-color: #1A2D38 !important;
+}
+html.dark .hover\:bg-\[\#EBF4F7\]:hover,
+html.dark .hover\:bg-\[\#DDECF1\]:hover {
+  background-color: #1E3E50 !important;
+}
+html.dark .focus\:bg-white:focus {
+  background-color: #111E26 !important;
+}
+
+html.dark .border-\[\#E5EAEF\],
+html.dark .border-\[\#EDF1F4\],
+html.dark .divide-\[\#EDF1F4\] > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1F3340 !important;
+}
+html.dark .border-\[\#D5E1E6\] {
+  border-color: #284152 !important;
+}
+
+html.dark .text-\[\#0D1F28\] {
+  color: #EBF2F6 !important;
+}
+html.dark .text-\[\#4E6470\] {
+  color: #9BB2BF !important;
+}
+html.dark .text-\[\#70848F\],
+html.dark .text-\[\#9EB0BA\] {
+  color: #7992A0 !important;
+}
+html.dark .text-\[\#002A3C\] {
+  color: #7FC3D9 !important;
+}
+html.dark .bg-\[\#002A3C\] {
+  background-color: #0E4A64 !important;
+  color: #FFFFFF !important;
+}
+html.dark .hover\:bg-\[\#0B435B\]:hover {
+  background-color: #155D7C !important;
+}
+html.dark .text-\[\#1D3519\] {
+  color: #BDD630 !important;
+}
+html.dark .border-\[\#1D3519\] {
+  border-color: #BDD630 !important;
+}
+html.dark .hover\:text-\[\#0D1F28\]:hover {
+  color: #FFFFFF !important;
+}
+html.dark .hover\:text-\[\#002A3C\]:hover {
+  color: #A5D8E8 !important;
+}
+html.dark .placeholder-\[\#70848F\]::placeholder {
+  color: #6B8493 !important;
+}
+
+html.dark input,
+html.dark textarea,
+html.dark select {
+  color-scheme: dark;
+}
+html.dark .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.14) !important;
+}
+html.dark .text-emerald-700 {
+  color: #6EE7B7 !important;
+}
+html.dark .bg-rose-50,
+html.dark .hover\:bg-rose-50:hover {
+  background-color: rgba(244, 63, 94, 0.15) !important;
+}
+html.dark .border-rose-200 {
+  border-color: rgba(244, 63, 94, 0.35) !important;
+}
+html.dark .text-rose-700,
+html.dark .text-rose-800 {
+  color: #FDA4AF !important;
+}
+html.dark .bg-amber-50 {
+  background-color: rgba(245, 158, 11, 0.15) !important;
+}
+html.dark .text-amber-800 {
+  color: #FCD34D !important;
+}
+
+html.dark .ambo-prose {
+  color: #D2E0E8;
+}
+html.dark .ambo-prose h1,
+html.dark .ambo-prose h2,
+html.dark .ambo-prose h3,
+html.dark .ambo-prose h4,
+html.dark .ambo-prose strong {
+  color: #F2F7FA;
+}
+html.dark .ambo-prose h3 {
+  color: #7FC3D9;
+}
+html.dark .ambo-prose blockquote {
+  border-left-color: #284152;
+  color: #9BB2BF;
 }

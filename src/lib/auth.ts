@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { eq, gt, lt, and } from "drizzle-orm";
 import { db, ensureDbInitialized } from "./db";
 import { users, sessions, aiSettings } from "./db/schema";
-import { DEFAULT_CAPTION_SETTINGS } from "./types";
+import { DEFAULT_CAPTION_SETTINGS, DEFAULT_PDF_DESIGN } from "./types";
 import { decryptSecret, encryptSecret } from "./security";
 import { hasClaudeBinaryInstalled } from "./ai/provider";
 
@@ -123,6 +123,12 @@ export function ensureUserAiSettings(userId: string) {
     whisperModel: "base",
     whisperLanguage: "auto",
     defaultCaptionSettingsJson: JSON.stringify(DEFAULT_CAPTION_SETTINGS),
+    pdfExportDir: "",
+    mediaExportDir: "",
+    exportMode: "browser",
+    defaultPdfDesignJson: JSON.stringify(DEFAULT_PDF_DESIGN),
+    themePreference: "light",
+    defaultSpeaker: "",
     updatedAt: now,
   };
   db.insert(aiSettings).values(row).run();

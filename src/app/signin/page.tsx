@@ -63,7 +63,12 @@ export default function SignInPage() {
           <img
             src="/brand/logo-stacked-primary.svg"
             alt="Ambo AI"
-            className="h-16 w-auto"
+            className="h-16 w-auto dark:hidden"
+          />
+          <img
+            src="/brand/logo-stacked-white.svg"
+            alt="Ambo AI"
+            className="hidden h-16 w-auto dark:block"
           />
         </div>
 

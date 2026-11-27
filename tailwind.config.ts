@@ -1,10 +1,12 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
+  darkMode: "class",
   content: [
     "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/lib/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
     extend: {
@@ -34,6 +36,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ["var(--font-jakarta)", "'Plus Jakarta Sans'", "system-ui", "sans-serif"],
+        jakarta: ["var(--font-jakarta)", "'Plus Jakarta Sans'", "sans-serif"],
         poppins: ["var(--font-poppins)", "Poppins", "sans-serif"],
         merriweather: ["var(--font-merriweather)", "Merriweather", "serif"],
         montserrat: ["var(--font-montserrat)", "Montserrat", "sans-serif"],

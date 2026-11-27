@@ -5,7 +5,8 @@ import path from "path";
 import { and, eq } from "drizzle-orm";
 import { db, ensureDbInitialized } from "@/lib/db";
 import { sermons } from "@/lib/db/schema";
-import { getCurrentUser } from "@/lib/auth";
+import { ensureUserAiSettings, getCurrentUser } from "@/lib/auth";
+import { copyFileToExportDir } from "@/lib/local-export";
 import { assertSafeDataPath, isValidUuid, safeErrorResponse } from "@/lib/security";
 import { withLocalBinPath } from "@/lib/env-path";
 
@@ -41,7 +42,7 @@ function runFfmpegMp3(inputPath: string, outputPath: string): Promise<void> {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -79,13 +80,27 @@ export async function GET(
       await runFfmpegMp3(safeMediaPath, mp3Path);
     }
 
-    const mp3Stat = fs.statSync(mp3Path);
     const safeTitle =
       sermon.title
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)/g, "") || "garden-church-sermon";
+    const fileName = `${safeTitle}-audio.mp3`;
 
+    const { searchParams } = new URL(req.url);
+    if (searchParams.get("saveToDisk") === "1") {
+      const settings = ensureUserAiSettings(user.id);
+      if (!settings.mediaExportDir) {
+        return NextResponse.json(
+          { error: "No Video & Audio folder configured in Settings." },
+          { status: 400 }
+        );
+      }
+      const saved = copyFileToExportDir(settings.mediaExportDir, fileName, mp3Path);
+      return NextResponse.json({ ok: true, ...saved });
+    }
+
+    const mp3Stat = fs.statSync(mp3Path);
     const stream = fs.createReadStream(mp3Path);
     const webStream = new ReadableStream({
       start(controller) {
@@ -103,7 +118,7 @@ export async function GET(
       headers: {
         "Content-Type": "audio/mpeg",
         "Content-Length": String(mp3Stat.size),
-        "Content-Disposition": `attachment; filename="${safeTitle}-audio.mp3"`,
+        "Content-Disposition": `attachment; filename="${fileName}"`,
         "Cache-Control": "private, no-store",
       },
     });

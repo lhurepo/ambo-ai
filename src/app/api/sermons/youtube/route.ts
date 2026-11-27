@@ -5,7 +5,7 @@ import path from "path";
 import { and, eq } from "drizzle-orm";
 import { db, ensureDbInitialized } from "@/lib/db";
 import { sermons } from "@/lib/db/schema";
-import { getCurrentUser } from "@/lib/auth";
+import { ensureUserAiSettings, getCurrentUser } from "@/lib/auth";
 import { startSermonPipeline } from "@/lib/jobs/pipeline";
 import { parseYoutubeVideoId } from "@/lib/youtube";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -74,12 +74,13 @@ export async function POST(req: Request) {
     const workDir = path.join(process.cwd(), "data", "uploads", sermonId);
     fs.mkdirSync(workDir, { recursive: true });
 
+    const userSettings = ensureUserAiSettings(user.id);
     db.insert(sermons)
       .values({
         id: sermonId,
         userId: user.id,
         title: customTitle || "YouTube Sermon",
-        speaker: "",
+        speaker: userSettings.defaultSpeaker || "",
         topic: "Faith & Discipleship",
         sourceType: "media",
         status: "queued",

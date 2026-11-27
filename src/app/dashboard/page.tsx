@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
+  Check,
   FileText,
   Film,
+  FolderOpen,
   Headphones,
   Link2,
   Loader2,
@@ -18,6 +20,7 @@ import { AuthenticatedShell } from "@/components/layout/AuthenticatedShell";
 import { NewSermonModal } from "@/components/sermon/NewSermonModal";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { useToast } from "@/components/ui/ToastProvider";
+import { downloadMediaEndpoint, revealPathInFinder } from "@/lib/client-download";
 
 interface SermonListItem {
   id: string;
@@ -90,6 +93,23 @@ export default function DashboardPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<SermonListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<{ savedPath: string; displayPath: string } | null>(
+    null
+  );
+
+  const handleDownloadMp3 = async (sermonId: string, title: string) => {
+    setSavedNotice(null);
+    try {
+      await downloadMediaEndpoint({
+        endpointUrl: `/api/sermons/${sermonId}/audio-mp3`,
+        fileName: `${title}-audio.mp3`,
+        mimeType: "audio/mpeg",
+        onSavedToFolder: (saved) => setSavedNotice(saved),
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Could not export MP3.");
+    }
+  };
 
   const loadData = useCallback(async () => {
     try {
@@ -180,6 +200,23 @@ export default function DashboardPage() {
     >
       <div className="mx-auto max-w-6xl px-5 py-7 md:px-8">
         <h1 className="text-2xl font-semibold tracking-tight text-[#0D1F28]">Dashboard</h1>
+
+        {savedNotice && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#D5E1E6] bg-[#F4F2E6]/70 px-4 py-2.5 text-xs text-[#1D3519]">
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              Saved to <code className="font-mono">{savedNotice.displayPath}</code>
+            </span>
+            <button
+              type="button"
+              onClick={() => void revealPathInFinder(savedNotice.savedPath)}
+              className="inline-flex items-center gap-1 rounded-full border border-[#D5E1E6] bg-white px-3 py-1 text-[11px] font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
+            >
+              <FolderOpen className="h-3 w-3" aria-hidden="true" />
+              Show in Finder
+            </button>
+          </div>
+        )}
 
         {loading ? (
           <div className="mt-12 flex items-center justify-center py-16 text-[#4E6470]">
@@ -287,13 +324,14 @@ export default function DashboardPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       {latest.mediaFileName && (
-                        <a
-                          href={`/api/sermons/${latest.id}/audio-mp3`}
+                        <button
+                          type="button"
+                          onClick={() => void handleDownloadMp3(latest.id, latest.title)}
                           className="inline-flex items-center gap-1.5 rounded-full border border-[#D5E1E6] bg-white px-3.5 py-2 text-xs font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
                         >
                           <Headphones className="h-3.5 w-3.5 text-[#4E6470]" aria-hidden="true" />
                           MP3
-                        </a>
+                        </button>
                       )}
                       <Link
                         href={`/sermon/${latest.id}`}
@@ -421,14 +459,15 @@ export default function DashboardPage() {
                         )}
                         <StatusBadge status={s.status} progress={s.progress} />
                         {s.mediaFileName && (
-                          <a
-                            href={`/api/sermons/${s.id}/audio-mp3`}
+                          <button
+                            type="button"
+                            onClick={() => void handleDownloadMp3(s.id, s.title)}
                             aria-label={`Download MP3 audio for ${s.title}`}
                             title="Download Spotify MP3"
                             className="rounded-lg p-1.5 text-[#70848F] transition hover:bg-[#EBF4F7] hover:text-[#002A3C]"
                           >
                             <Headphones className="h-4 w-4" aria-hidden="true" />
-                          </a>
+                          </button>
                         )}
                         <button
                           type="button"

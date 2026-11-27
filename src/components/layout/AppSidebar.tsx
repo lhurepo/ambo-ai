@@ -5,17 +5,20 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Home,
-  KeyRound,
   Layers,
   LogOut,
   Menu,
+  Moon,
   Plus,
   Power,
   RefreshCw,
+  Settings,
+  Sun,
   User,
   X,
 } from "lucide-react";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { useTheme } from "@/components/ui/ThemeProvider";
 import { UpdateAppModal } from "./UpdateAppModal";
 
 interface AppSidebarProps {
@@ -27,6 +30,7 @@ interface AppSidebarProps {
 export function AppSidebar({ onNewSermon }: AppSidebarProps) {
   const pathname = usePathname() || "";
   const router = useRouter();
+  const { toggleDark } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [updatesAvailable, setUpdatesAvailable] = useState(0);
@@ -71,7 +75,7 @@ export function AppSidebar({ onNewSermon }: AppSidebarProps) {
   const navItems = [
     { href: "/dashboard", label: "Dashboard", icon: Home },
     { href: "/prompt-library", label: "Prompt library", icon: Layers },
-    { href: "/settings", label: "API keys", icon: KeyRound },
+    { href: "/settings", label: "Settings", icon: Settings },
     { href: "/account", label: "Account", icon: User },
   ];
 
@@ -83,7 +87,12 @@ export function AppSidebar({ onNewSermon }: AppSidebarProps) {
             <img
               src="/brand/logo-horizontal-primary.svg"
               alt="Ambo AI"
-              className="h-7 w-auto"
+              className="h-7 w-auto dark:hidden"
+            />
+            <img
+              src="/brand/logo-horizontal-white.svg"
+              alt="Ambo AI"
+              className="hidden h-7 w-auto dark:block"
             />
           </Link>
           <button
@@ -139,6 +148,17 @@ export function AppSidebar({ onNewSermon }: AppSidebarProps) {
       </div>
 
       <div className="space-y-1 border-t border-[#EDF1F4] pt-3">
+        <button
+          type="button"
+          onClick={toggleDark}
+          className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium text-[#4E6470] transition hover:bg-[#F3F5F7] hover:text-[#0D1F28]"
+        >
+          <Moon className="h-4 w-4 shrink-0 text-[#70848F] dark:hidden" aria-hidden="true" />
+          <Sun className="hidden h-4 w-4 shrink-0 text-[#BDD630] dark:block" aria-hidden="true" />
+          <span className="dark:hidden">Dark mode</span>
+          <span className="hidden dark:inline">Light mode</span>
+        </button>
+
         <button
           type="button"
           onClick={() => {
@@ -198,7 +218,12 @@ export function AppSidebar({ onNewSermon }: AppSidebarProps) {
           <img
             src="/brand/logo-horizontal-primary.svg"
             alt="Ambo AI"
-            className="h-6 w-auto"
+            className="h-6 w-auto dark:hidden"
+          />
+          <img
+            src="/brand/logo-horizontal-white.svg"
+            alt="Ambo AI"
+            className="hidden h-6 w-auto dark:block"
           />
         </Link>
         <div className="flex items-center gap-2">

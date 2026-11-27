@@ -27,6 +27,12 @@ export const aiSettings = sqliteTable("ai_settings", {
   whisperModel: text("whisper_model").notNull().default("base"), // tiny | base | small | medium
   whisperLanguage: text("whisper_language").notNull().default("auto"),
   defaultCaptionSettingsJson: text("default_caption_settings_json").notNull().default("{}"),
+  pdfExportDir: text("pdf_export_dir").notNull().default(""),
+  mediaExportDir: text("media_export_dir").notNull().default(""),
+  exportMode: text("export_mode").notNull().default("browser"), // browser | folder | ask
+  defaultPdfDesignJson: text("default_pdf_design_json").notNull().default("{}"),
+  themePreference: text("theme_preference").notNull().default("light"), // light | dark | system
+  defaultSpeaker: text("default_speaker").notNull().default(""),
   updatedAt: integer("updated_at").notNull(),
 });
 

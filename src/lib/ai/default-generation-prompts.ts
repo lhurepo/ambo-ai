@@ -5,7 +5,14 @@ import { generationPrompts } from "../db/schema";
 export interface GenerationPromptSlot {
   key: string;
   label: string;
-  group: "Global" | "Sermon Notes" | "Discipleship" | "Social & Comms" | "Preaching Coach" | "Video Clips";
+  group:
+    | "Global"
+    | "Sermon Notes"
+    | "Discipleship"
+    | "Social & Comms"
+    | "Preaching Coach"
+    | "Video Clips"
+    | "PDF & Design";
   defaultPrompt: string;
 }
 
@@ -132,6 +139,13 @@ export const GENERATION_PROMPT_SLOTS: GenerationPromptSlot[] = [
     group: "Video Clips",
     defaultPrompt:
       "Select 4 self-contained, high-impact sermon moments (15–65 seconds each when duration allows) that work well on vertical social reels without needing prior context.",
+  },
+  {
+    key: "pdf_design",
+    label: "PDF Handout & Design Prompt",
+    group: "PDF & Design",
+    defaultPrompt:
+      "Design a warm, scannable Sunday handout for The Garden Church. Keep bullet points concise, highlight key Scriptures in bold or callout boxes, and choose a clean layout and density that prints cleanly without awkward page splits.",
   },
 ];
 

@@ -7,6 +7,7 @@ import {
   Download,
   Edit3,
   FileDown,
+  FolderOpen,
   Loader2,
   RefreshCw,
   RotateCcw,
@@ -18,6 +19,11 @@ import {
 import { MarkdownView } from "@/components/ui/MarkdownView";
 import { useToast } from "@/components/ui/ToastProvider";
 import { copyToClipboard } from "@/lib/clipboard";
+import {
+  fetchExportPreferences,
+  revealPathInFinder,
+  saveBlobWithMode,
+} from "@/lib/client-download";
 import type { AssetType } from "@/lib/types";
 
 interface AssetPanelProps {
@@ -46,6 +52,9 @@ export function AssetPanel({
   const [customInstruction, setCustomInstruction] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<{ savedPath: string; displayPath: string } | null>(
+    null
+  );
 
   // Saved permanent prompt rule editor
   const [showDefaultRule, setShowDefaultRule] = useState(false);
@@ -65,16 +74,36 @@ export function AssetPanel({
     }
   };
 
-  const handleDownloadMd = () => {
-    const blob = new Blob([`# ${title}\n\n${content}`], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${assetType}.md`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const handleDownloadMd = async () => {
+    setSavedNotice(null);
+    const mdText = `# ${title}\n\n${content}`;
+    const prefs = await fetchExportPreferences();
+    if (prefs.exportMode === "folder" && prefs.pdfExportDir) {
+      const res = await fetch("/api/system/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save_markdown",
+          fileName: `${assetType}.md`,
+          content: mdText,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSavedNotice({ savedPath: data.savedPath, displayPath: data.displayPath });
+      } else {
+        toastError(data.error || "Could not save Markdown file.");
+      }
+      return;
+    }
+
+    const blob = new Blob([mdText], { type: "text/markdown;charset=utf-8" });
+    await saveBlobWithMode({
+      blob,
+      fileName: `${assetType}.md`,
+      mimeType: "text/markdown",
+      exportMode: prefs.exportMode,
+    });
   };
 
   const handleExportGardenPdf = async () => {
@@ -84,7 +113,11 @@ export function AssetPanel({
       return;
     }
     setExportingPdf(true);
+    setSavedNotice(null);
     try {
+      const prefs = await fetchExportPreferences();
+      const saveToDisk = prefs.exportMode === "folder" && Boolean(prefs.pdfExportDir);
+
       const res = await fetch(`/api/sermons/${sermonId}/pdf`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -92,21 +125,25 @@ export function AssetPanel({
           documentTitle: `${title} — The Garden Church`,
           sections: [{ assetType, title, content: activeText }],
           includeNoteLines: false,
+          saveToDisk,
         }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error || "PDF export failed");
       }
+      if (saveToDisk) {
+        const saved = await res.json();
+        setSavedNotice({ savedPath: saved.savedPath, displayPath: saved.displayPath });
+        return;
+      }
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${assetType}-garden-church.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await saveBlobWithMode({
+        blob,
+        fileName: `${assetType}-garden-church.pdf`,
+        mimeType: "application/pdf",
+        exportMode: prefs.exportMode,
+      });
     } catch (err) {
       toastError(err instanceof Error ? err.message : "Could not export PDF.");
     } finally {
@@ -366,6 +403,23 @@ export function AssetPanel({
           >
             <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
             Run
+          </button>
+        </div>
+      )}
+
+      {savedNotice && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#D5E1E6] bg-[#F4F2E6]/70 px-3.5 py-2 text-xs text-[#1D3519]">
+          <span className="inline-flex items-center gap-1.5 font-medium">
+            <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            Saved to <code className="font-mono">{savedNotice.displayPath}</code>
+          </span>
+          <button
+            type="button"
+            onClick={() => void revealPathInFinder(savedNotice.savedPath)}
+            className="inline-flex items-center gap-1 rounded-full border border-[#D5E1E6] bg-white px-2.5 py-1 text-[11px] font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
+          >
+            <FolderOpen className="h-3 w-3" aria-hidden="true" />
+            Show in Finder
           </button>
         </div>
       )}

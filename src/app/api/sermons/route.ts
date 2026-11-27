@@ -5,7 +5,7 @@ import path from "path";
 import { desc, eq, and } from "drizzle-orm";
 import { db, ensureDbInitialized } from "@/lib/db";
 import { clips, sermonAssets, sermons } from "@/lib/db/schema";
-import { getCurrentUser } from "@/lib/auth";
+import { ensureUserAiSettings, getCurrentUser } from "@/lib/auth";
 import { startSermonPipeline } from "@/lib/jobs/pipeline";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { assertSafeDataPath, isValidUuid, logAuditEvent, safeErrorResponse } from "@/lib/security";
@@ -177,12 +177,13 @@ export async function POST(req: Request) {
           .run();
       }
     } else {
+      const userSettings = ensureUserAiSettings(user.id);
       db.insert(sermons)
         .values({
           id: sermonId,
           userId: user.id,
           title: cleanTitle,
-          speaker: user.fullName || "",
+          speaker: userSettings.defaultSpeaker || user.fullName || "",
           topic: "Analyzing...",
           sourceType: detectedKind,
           status: "queued",

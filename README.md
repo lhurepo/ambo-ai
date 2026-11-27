@@ -66,7 +66,8 @@ Your sermons, clips, custom prompts, and settings are stored locally in `data/` 
 
 ## Key Features
 - **Sermon Workspace:** Upload MP4/MOV/MP3, paste a YouTube link, or upload a manuscript (`TXT`, `MD`, `PDF`, `DOCX`, `PPTX`).
-- **Garden Church PDF Packet:** Branded PDFs using official Garden Church **Yankee** fonts with one-click single-resource export or full multi-section packets with reflection lines.
-- **9:16 Video Clip Studio:** Auto-curated sermon moments, speaker tracking, live caption preview, word-level transcript editing, and MP4 / `.zip` export.
+- **Garden Church PDF Packet:** Branded PDFs using official Garden Church **Yankee** fonts (plus Editorial/Classic/Modern pairings), customizable layout styles, and an editable **AI PDF Design Prompt** linked to your logged-in Claude / AI account.
+- **9:16 Video Clip Studio:** Auto-curated sermon moments, speaker tracking, Garden Church default caption overlay theme, 12 distinct fonts, toggleable captions/uppercase/karaoke/face-framing controls, and MP4 / `.zip` export.
+- **Custom Download Folders & Dark Mode (`Settings`):** Choose custom Mac save folders (e.g. Desktop/Movies) or browser downloads, toggle Light/Dark/System mode, run a Mac system check, and configure default speaker & AI/Whisper settings.
 - **Spotify MP3 Export:** One-click 192kbps stereo MP3 audio export from any sermon video.
 - **Custom Generation Rules (`/prompt-library`):** Customize the AI instructions used automatically on every sermon.

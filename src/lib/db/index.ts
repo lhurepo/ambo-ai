@@ -63,6 +63,12 @@ export function ensureDbInitialized() {
       whisper_model TEXT NOT NULL DEFAULT 'base',
       whisper_language TEXT NOT NULL DEFAULT 'auto',
       default_caption_settings_json TEXT NOT NULL DEFAULT '{}',
+      pdf_export_dir TEXT NOT NULL DEFAULT '',
+      media_export_dir TEXT NOT NULL DEFAULT '',
+      export_mode TEXT NOT NULL DEFAULT 'browser',
+      default_pdf_design_json TEXT NOT NULL DEFAULT '{}',
+      theme_preference TEXT NOT NULL DEFAULT 'light',
+      default_speaker TEXT NOT NULL DEFAULT '',
       updated_at INTEGER NOT NULL
     );
 
@@ -167,6 +173,21 @@ export function ensureDbInitialized() {
     sqlite.exec("ALTER TABLE sermons ADD COLUMN youtube_url TEXT;");
   } catch {
     // Column already exists on fresh DBs
+  }
+
+  for (const colSql of [
+    "ALTER TABLE ai_settings ADD COLUMN pdf_export_dir TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE ai_settings ADD COLUMN media_export_dir TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE ai_settings ADD COLUMN export_mode TEXT NOT NULL DEFAULT 'browser';",
+    "ALTER TABLE ai_settings ADD COLUMN default_pdf_design_json TEXT NOT NULL DEFAULT '{}';",
+    "ALTER TABLE ai_settings ADD COLUMN theme_preference TEXT NOT NULL DEFAULT 'light';",
+    "ALTER TABLE ai_settings ADD COLUMN default_speaker TEXT NOT NULL DEFAULT '';",
+  ]) {
+    try {
+      sqlite.exec(colSql);
+    } catch {
+      // Column already exists
+    }
   }
 
   // Seed built-in v2prompts idempotently

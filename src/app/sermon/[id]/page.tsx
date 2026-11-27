@@ -6,12 +6,14 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   BookOpen,
+  Check,
   CheckCircle2,
   Download,
   Edit3,
   FileDown,
   FileText,
   Film,
+  FolderOpen,
   Headphones,
   Loader2,
   Mail,
@@ -27,6 +29,7 @@ import { SermonChatPanel } from "@/components/sermon/SermonChatPanel";
 import { ClipStudio, type ClipItem } from "@/components/clips/ClipStudio";
 import { NewSermonModal } from "@/components/sermon/NewSermonModal";
 import { GardenPdfModal } from "@/components/sermon/GardenPdfModal";
+import { downloadMediaEndpoint, revealPathInFinder } from "@/lib/client-download";
 import { useToast } from "@/components/ui/ToastProvider";
 import type { AssetType, FaceTrackData, TranscriptSegment } from "@/lib/types";
 
@@ -59,7 +62,7 @@ type TopTab = "sermon" | "feedback" | "discipleship" | "socials" | "clips" | "co
 export default function SermonWorkspacePage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { success, info } = useToast();
+  const { success, error: toastError, info } = useToast();
   const sermonId = params.id;
 
   const [sermon, setSermon] = useState<SermonDetail | null>(null);
@@ -86,8 +89,13 @@ export default function SermonWorkspacePage() {
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [speakerDraft, setSpeakerDraft] = useState("");
+  const [topicDraft, setTopicDraft] = useState("");
   const [attachModal, setAttachModal] = useState<"media" | "manuscript" | null>(null);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<{ savedPath: string; displayPath: string } | null>(
+    null
+  );
 
   const mediaRef = useRef<HTMLVideoElement & HTMLAudioElement>(null);
   const [currentTimeSec, setCurrentTimeSec] = useState(0);
@@ -105,6 +113,8 @@ export default function SermonWorkspacePage() {
     const data = await res.json();
     setSermon(data.sermon);
     setTitleDraft(data.sermon.title);
+    setSpeakerDraft(data.sermon.speaker || "");
+    setTopicDraft(data.sermon.topic || "");
     setAssets(data.assets || {});
     setClips(data.clips || []);
     setChatMessages(data.chatMessages || []);
@@ -164,11 +174,52 @@ export default function SermonWorkspacePage() {
     await fetch(`/api/sermons/${sermonId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: titleDraft.trim() }),
+      body: JSON.stringify({
+        title: titleDraft.trim(),
+        speaker: speakerDraft.trim(),
+        topic: topicDraft.trim() || undefined,
+      }),
     });
-    setSermon((prev) => (prev ? { ...prev, title: titleDraft.trim() } : prev));
+    setSermon((prev) =>
+      prev
+        ? {
+            ...prev,
+            title: titleDraft.trim(),
+            speaker: speakerDraft.trim(),
+            topic: topicDraft.trim() || prev.topic,
+          }
+        : prev
+    );
     setEditingTitle(false);
-    success("Sermon title updated.");
+    success("Sermon details updated.");
+  };
+
+  const handleDownloadMp3 = async () => {
+    setSavedNotice(null);
+    try {
+      await downloadMediaEndpoint({
+        endpointUrl: `/api/sermons/${sermonId}/audio-mp3`,
+        fileName: `${sermon?.title || "sermon"}-audio.mp3`,
+        mimeType: "audio/mpeg",
+        onSavedToFolder: (saved) => setSavedNotice(saved),
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Could not export MP3.");
+    }
+  };
+
+  const handleDownloadPack = async () => {
+    setSavedNotice(null);
+    try {
+      await downloadMediaEndpoint({
+        endpointUrl: `/api/sermons/${sermonId}/clips/download-all`,
+        fileName: `${sermon?.title || "sermon"}-ambo-pack.zip`,
+        mimeType: "application/zip",
+        onSavedToFolder: (saved) => setSavedNotice(saved),
+      });
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : "Could not export pack.");
+    }
   };
 
   const handleCreateCustomClip = async (startMs: number, endMs: number, excerpt: string) => {
@@ -237,14 +288,33 @@ export default function SermonWorkspacePage() {
             </Link>
             <div className="min-w-0">
               {editingTitle ? (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <input
                     type="text"
                     value={titleDraft}
                     onChange={(e) => setTitleDraft(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleSaveTitle()}
                     aria-label="Sermon title"
-                    className="rounded-lg border border-[#D5E1E6] bg-white px-3 py-1 text-base font-semibold text-[#0D1F28] focus:outline-none"
+                    placeholder="Sermon title"
+                    className="rounded-lg border border-[#D5E1E6] bg-white px-3 py-1 text-sm font-semibold text-[#0D1F28] focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={speakerDraft}
+                    onChange={(e) => setSpeakerDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSaveTitle()}
+                    aria-label="Speaker name"
+                    placeholder="Speaker"
+                    className="w-36 rounded-lg border border-[#D5E1E6] bg-white px-2.5 py-1 text-xs text-[#0D1F28] focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={topicDraft}
+                    onChange={(e) => setTopicDraft(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSaveTitle()}
+                    aria-label="Topic"
+                    placeholder="Topic"
+                    className="w-36 rounded-lg border border-[#D5E1E6] bg-white px-2.5 py-1 text-xs text-[#0D1F28] focus:outline-none"
                   />
                   <button
                     type="button"
@@ -262,7 +332,7 @@ export default function SermonWorkspacePage() {
                   <button
                     type="button"
                     onClick={() => setEditingTitle(true)}
-                    aria-label="Edit sermon title"
+                    aria-label="Edit sermon details"
                     className="text-[#70848F] hover:text-[#0D1F28]"
                   >
                     <Edit3 className="h-4 w-4" aria-hidden="true" />
@@ -275,6 +345,7 @@ export default function SermonWorkspacePage() {
                     {sermon.topic}
                   </span>
                 )}
+                {sermon.speaker && <span>{sermon.speaker} ·</span>}
                 <span>
                   {new Date(sermon.createdAt).toLocaleDateString("en-US", {
                     month: "short",
@@ -310,13 +381,14 @@ export default function SermonWorkspacePage() {
               </button>
             )}
             {sermon.hasMedia && (
-              <a
-                href={`/api/sermons/${sermonId}/audio-mp3`}
+              <button
+                type="button"
+                onClick={handleDownloadMp3}
                 className="inline-flex items-center gap-1.5 rounded-full border border-[#D5E1E6] bg-white px-3.5 py-1.5 text-xs font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
               >
                 <Headphones className="h-3.5 w-3.5 text-[#4E6470]" aria-hidden="true" />
                 Download MP3
-              </a>
+              </button>
             )}
             <button
               type="button"
@@ -326,15 +398,33 @@ export default function SermonWorkspacePage() {
               <FileDown className="h-3.5 w-3.5 text-[#BDD630]" aria-hidden="true" />
               Garden PDF Packet
             </button>
-            <a
-              href={`/api/sermons/${sermonId}/clips/download-all`}
+            <button
+              type="button"
+              onClick={handleDownloadPack}
               className="inline-flex items-center gap-1.5 rounded-full bg-[#002A3C] px-4 py-1.5 text-xs font-medium text-white hover:bg-[#0B435B]"
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               Export all (.zip)
-            </a>
+            </button>
           </div>
         </div>
+
+        {savedNotice && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#D5E1E6] bg-[#F4F2E6]/70 px-4 py-2.5 text-xs text-[#1D3519]">
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              Saved to <code className="font-mono">{savedNotice.displayPath}</code>
+            </span>
+            <button
+              type="button"
+              onClick={() => void revealPathInFinder(savedNotice.savedPath)}
+              className="inline-flex items-center gap-1 rounded-full border border-[#D5E1E6] bg-white px-3 py-1 text-[11px] font-medium text-[#0D1F28] hover:bg-[#F3F5F7]"
+            >
+              <FolderOpen className="h-3 w-3" aria-hidden="true" />
+              Show in Finder
+            </button>
+          </div>
+        )}
 
         {sermon.status !== "completed" && (
           <div

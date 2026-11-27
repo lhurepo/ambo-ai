@@ -1,6 +1,7 @@
 export type CaptionTypography =
-  | "GardenResolve"
   | "GardenYankee"
+  | "GardenResolve"
+  | "PlusJakarta"
   | "Modern"
   | "Classic"
   | "Bold"
@@ -27,194 +28,304 @@ export interface CaptionSettings {
   highlights: boolean; // Karaoke highlighting
   highlightColorHex: string;
   facialTracking: boolean;
+  showCaptions?: boolean;
+  uppercase?: boolean;
 }
 
-export interface CaptionPreset extends CaptionSettings {
+export interface FontOption {
+  id: CaptionTypography;
   label: string;
+  category: string;
   fontClass: string;
-  description: string;
+  fontFamilyCss: string;
+  sample: string;
 }
 
-export const CAPTION_PRESETS: CaptionPreset[] = [
+export const FONT_OPTIONS: FontOption[] = [
   {
-    typography: "GardenYankee",
+    id: "GardenYankee",
     label: "Garden Sans",
+    category: "Church Brand",
     fontClass: "font-yankee",
-    description: "Garden Church brand sans",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "medium",
-    colorHex: "#FFFFFF",
-    backgroundStyle: "background",
-    backgroundColorHex: "#121413",
-    highlights: true,
-    highlightColorHex: "#BDD630",
-    facialTracking: true,
+    fontFamilyCss: "'Yankee', sans-serif",
+    sample: "Grace & Peace",
   },
   {
-    typography: "GardenResolve",
+    id: "GardenResolve",
     label: "Garden Display",
-    fontClass: "font-resolve tracking-wide uppercase",
-    description: "Garden Church compressed headline",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "large",
+    category: "Church Brand",
+    fontClass: "font-resolve",
+    fontFamilyCss: "'Resolve Compressed', sans-serif",
+    sample: "GRACE & PEACE",
+  },
+  {
+    id: "PlusJakarta",
+    label: "Plus Jakarta",
+    category: "Modern",
+    fontClass: "font-jakarta",
+    fontFamilyCss: "'Plus Jakarta Sans', sans-serif",
+    sample: "Grace & Peace",
+  },
+  {
+    id: "Modern",
+    label: "Poppins",
+    category: "Clean",
+    fontClass: "font-poppins",
+    fontFamilyCss: "'Poppins', sans-serif",
+    sample: "Grace & Peace",
+  },
+  {
+    id: "Bold",
+    label: "Montserrat",
+    category: "Bold",
+    fontClass: "font-montserrat",
+    fontFamilyCss: "'Montserrat', sans-serif",
+    sample: "Grace & Peace",
+  },
+  {
+    id: "Condensed",
+    label: "Bebas Neue",
+    category: "Tall",
+    fontClass: "font-bebas",
+    fontFamilyCss: "'Bebas Neue', sans-serif",
+    sample: "GRACE & PEACE",
+  },
+  {
+    id: "Classic",
+    label: "Merriweather",
+    category: "Serif",
+    fontClass: "font-merriweather",
+    fontFamilyCss: "'Merriweather', serif",
+    sample: "Grace & Peace",
+  },
+  {
+    id: "Refined",
+    label: "Baskerville",
+    category: "Serif",
+    fontClass: "font-libreBaskerville",
+    fontFamilyCss: "'Libre Baskerville', serif",
+    sample: "Grace & Peace",
+  },
+  {
+    id: "Elegant",
+    label: "Raleway",
+    category: "Light",
+    fontClass: "font-raleway",
+    fontFamilyCss: "'Raleway', sans-serif",
+    sample: "Grace & Peace",
+  },
+  {
+    id: "Playful",
+    label: "Fredoka",
+    category: "Friendly",
+    fontClass: "font-fredoka",
+    fontFamilyCss: "'Fredoka', sans-serif",
+    sample: "Grace & Peace",
+  },
+  {
+    id: "Sleek",
+    label: "Work Sans",
+    category: "Studio",
+    fontClass: "font-workSans",
+    fontFamilyCss: "'Work Sans', sans-serif",
+    sample: "Grace & Peace",
+  },
+  {
+    id: "Typewriter",
+    label: "Courier Prime",
+    category: "Mono",
+    fontClass: "font-courierPrime",
+    fontFamilyCss: "'Courier Prime', monospace",
+    sample: "Grace & Peace",
+  },
+];
+
+export interface OverlayColorTheme {
+  id: string;
+  label: string;
+  colorHex: string;
+  backgroundStyle: CaptionBgStyle;
+  backgroundColorHex: string;
+  highlights: boolean;
+  highlightColorHex: string;
+}
+
+export const OVERLAY_COLOR_THEMES: OverlayColorTheme[] = [
+  {
+    id: "garden-root",
+    label: "Garden Root",
     colorHex: "#FFFFFF",
     backgroundStyle: "background",
     backgroundColorHex: "#1D3519",
     highlights: true,
     highlightColorHex: "#BDD630",
-    facialTracking: true,
   },
   {
-    typography: "Modern",
-    label: "Modern",
-    fontClass: "font-poppins",
-    description: "Clean geometric pill",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "medium",
-    colorHex: "#FFFFFF",
+    id: "garden-soil",
+    label: "Garden Soil",
+    colorHex: "#F4F2E6",
     backgroundStyle: "background",
-    backgroundColorHex: "#002A3C",
+    backgroundColorHex: "#121413",
     highlights: true,
-    highlightColorHex: "#6FB3C8",
-    facialTracking: true,
+    highlightColorHex: "#BDD630",
   },
   {
-    typography: "Classic",
-    label: "Classic",
-    fontClass: "font-merriweather",
-    description: "Editorial serif warmth",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "medium",
-    colorHex: "#FFFFFF",
-    backgroundStyle: "none",
-    backgroundColorHex: "#001B27",
-    highlights: true,
-    highlightColorHex: "#F3B92D",
-    facialTracking: true,
-  },
-  {
-    typography: "Bold",
-    label: "Bold",
-    fontClass: "font-montserrat",
-    description: "High-impact social reel",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "medium",
-    colorHex: "#FFFFFF",
-    backgroundStyle: "none",
-    backgroundColorHex: "#000000",
-    highlights: true,
-    highlightColorHex: "#F3B92D",
-    facialTracking: true,
-  },
-  {
-    typography: "Elegant",
-    label: "Elegant",
-    fontClass: "font-raleway",
-    description: "Refined light card",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "medium",
-    colorHex: "#002A3C",
+    id: "garden-dew",
+    label: "Garden Dew",
+    colorHex: "#1D3519",
     backgroundStyle: "background",
-    backgroundColorHex: "#FFFFFF",
+    backgroundColorHex: "#F4F2E6",
     highlights: true,
-    highlightColorHex: "#2A7B96",
-    facialTracking: true,
+    highlightColorHex: "#121413",
   },
   {
-    typography: "Condensed",
-    label: "Condensed",
-    fontClass: "font-bebas",
-    description: "Punchy vertical headline",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "large",
-    colorHex: "#FFFFFF",
-    backgroundStyle: "background",
-    backgroundColorHex: "#2A7B96",
-    highlights: true,
-    highlightColorHex: "#F3B92D",
-    facialTracking: true,
-  },
-  {
-    typography: "Playful",
-    label: "Playful",
-    fontClass: "font-fredoka",
-    description: "Friendly youth ministry",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "medium",
-    colorHex: "#FFFFFF",
-    backgroundStyle: "none",
-    backgroundColorHex: "#002A3C",
-    highlights: true,
-    highlightColorHex: "#81DAF2",
-    facialTracking: true,
-  },
-  {
-    typography: "Sleek",
-    label: "Sleek",
-    fontClass: "font-workSans",
-    description: "Outlined studio subtitle",
-    aspectRatio: "9:16",
-    position: "bottom",
-    captionSize: "medium",
+    id: "garden-clean",
+    label: "Clean Shadow",
     colorHex: "#FFFFFF",
     backgroundStyle: "border",
-    backgroundColorHex: "#002A3C",
+    backgroundColorHex: "#1D3519",
     highlights: true,
-    highlightColorHex: "#6FB3C8",
-    facialTracking: true,
+    highlightColorHex: "#BDD630",
   },
   {
-    typography: "Refined",
-    label: "Refined",
-    fontClass: "font-libreBaskerville",
-    description: "Timeless sermon quote",
-    aspectRatio: "9:16",
-    position: "mid",
-    captionSize: "medium",
-    colorHex: "#F7F5F0",
-    backgroundStyle: "none",
-    backgroundColorHex: "#002A3C",
-    highlights: false,
-    highlightColorHex: "#6FB3C8",
-    facialTracking: true,
-  },
-  {
-    typography: "Typewriter",
-    label: "Typewriter",
-    fontClass: "font-courierPrime",
-    description: "Notes & study journal",
-    aspectRatio: "9:16",
-    position: "bottom",
-    captionSize: "small",
-    colorHex: "#001B27",
+    id: "ambo-navy",
+    label: "Ambo Navy",
+    colorHex: "#FFFFFF",
     backgroundStyle: "background",
-    backgroundColorHex: "#F7F5F0",
+    backgroundColorHex: "#002A3C",
     highlights: true,
-    highlightColorHex: "#2A7B96",
-    facialTracking: true,
+    highlightColorHex: "#6FB3C8",
   },
 ];
 
+export interface CaptionPreset extends CaptionSettings {
+  label: string;
+  fontClass: string;
+  fontFamilyCss: string;
+  description: string;
+}
+
+export const CAPTION_PRESETS: CaptionPreset[] = FONT_OPTIONS.map((opt) => {
+  const isGarden = opt.id === "GardenYankee" || opt.id === "GardenResolve";
+  return {
+    typography: opt.id,
+    label: opt.label,
+    fontClass: opt.fontClass,
+    fontFamilyCss: opt.fontFamilyCss,
+    description: `${opt.category} typeface`,
+    aspectRatio: "9:16",
+    position: "mid",
+    captionSize: opt.id === "GardenResolve" || opt.id === "Condensed" ? "large" : "medium",
+    colorHex: "#FFFFFF",
+    backgroundStyle: "background",
+    backgroundColorHex: isGarden || opt.id === "PlusJakarta" ? "#1D3519" : "#1D3519",
+    highlights: true,
+    highlightColorHex: "#BDD630",
+    facialTracking: true,
+    showCaptions: true,
+    uppercase: opt.id === "GardenResolve" || opt.id === "Condensed",
+  };
+});
+
 export const DEFAULT_CAPTION_SETTINGS: CaptionSettings = {
-  typography: "Bold",
+  typography: "GardenYankee",
   aspectRatio: "9:16",
   position: "mid",
   captionSize: "medium",
   colorHex: "#FFFFFF",
-  backgroundStyle: "none",
-  backgroundColorHex: "#002A3C",
+  backgroundStyle: "background",
+  backgroundColorHex: "#1D3519",
   highlights: true,
-  highlightColorHex: "#6FB3C8",
+  highlightColorHex: "#BDD630",
   facialTracking: true,
+  showCaptions: true,
+  uppercase: false,
 };
+
+export type PdfHeaderStyle = "banner" | "minimal" | "boxed" | "centered";
+export type PdfFontPairing = "garden" | "editorial" | "classic" | "modern";
+export type PdfDensity = "compact" | "comfortable" | "spacious";
+
+export interface PdfPalette {
+  primaryHex: string;
+  accentHex: string;
+  surfaceHex: string;
+  headerBgHex: string;
+  headerTextHex: string;
+}
+
+export interface PdfDesignSpec {
+  headerStyle: PdfHeaderStyle;
+  fontPairing: PdfFontPairing;
+  density: PdfDensity;
+  palette: PdfPalette;
+  showLogo: boolean;
+  showMetadata: boolean;
+  showBadgeNumbers: boolean;
+  uppercaseHeadings: boolean;
+  useAiDesigner: boolean;
+}
+
+export const PDF_COLOR_THEMES: Array<{ id: string; label: string; palette: PdfPalette }> = [
+  {
+    id: "garden-classic",
+    label: "Garden Classic",
+    palette: {
+      primaryHex: "#1D3519",
+      accentHex: "#BDD630",
+      surfaceHex: "#F4F2E6",
+      headerBgHex: "#1D3519",
+      headerTextHex: "#FFFFFF",
+    },
+  },
+  {
+    id: "garden-ink-saver",
+    label: "Garden Print (Light)",
+    palette: {
+      primaryHex: "#1D3519",
+      accentHex: "#BDD630",
+      surfaceHex: "#F4F2E6",
+      headerBgHex: "#F4F2E6",
+      headerTextHex: "#1D3519",
+    },
+  },
+  {
+    id: "ambo-navy",
+    label: "Ambo Navy",
+    palette: {
+      primaryHex: "#002A3C",
+      accentHex: "#2A7B96",
+      surfaceHex: "#EBF4F7",
+      headerBgHex: "#002A3C",
+      headerTextHex: "#FFFFFF",
+    },
+  },
+  {
+    id: "mono-print",
+    label: "Clean Monochrome",
+    palette: {
+      primaryHex: "#121413",
+      accentHex: "#576258",
+      surfaceHex: "#F3F4F6",
+      headerBgHex: "#FFFFFF",
+      headerTextHex: "#121413",
+    },
+  },
+];
+
+export const DEFAULT_PDF_DESIGN: PdfDesignSpec = {
+  headerStyle: "banner",
+  fontPairing: "garden",
+  density: "comfortable",
+  palette: { ...PDF_COLOR_THEMES[0].palette },
+  showLogo: true,
+  showMetadata: true,
+  showBadgeNumbers: true,
+  uppercaseHeadings: true,
+  useAiDesigner: false,
+};
+
+export type ExportMode = "browser" | "folder" | "ask";
 
 export interface TranscriptWord {
   id: string;
@@ -283,4 +394,10 @@ export interface AiSettingsPublic {
   whisperModel: "tiny" | "base" | "small" | "medium";
   whisperLanguage: string;
   defaultCaptionSettings: CaptionSettings;
+  defaultPdfDesign: PdfDesignSpec;
+  pdfExportDir: string;
+  mediaExportDir: string;
+  exportMode: ExportMode;
+  themePreference: "light" | "dark" | "system";
+  defaultSpeaker: string;
 }

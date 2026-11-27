@@ -21,7 +21,8 @@ os.environ["PATH"] = os.pathsep.join(EXTRA_BIN_PATHS + [os.environ.get("PATH", "
 
 FONT_MAP = {
     "GardenResolve": "Resolve Sans Bold Cm",
-    "GardenYankee": "Yankee",
+    "GardenYankee": "Yankee Bold",
+    "PlusJakarta": "Plus Jakarta Sans",
     "Modern": "Poppins",
     "Classic": "Merriweather",
     "Bold": "Montserrat",
@@ -36,6 +37,7 @@ FONT_MAP = {
 FONT_FILE_MAP = {
     "GardenResolve": ["Resolve-BoldCm.otf"],
     "GardenYankee": ["Yankee-Bold.otf", "Yankee-Regular.otf"],
+    "PlusJakarta": ["PlusJakartaSans-Bold.ttf", "PlusJakartaSans-Regular.ttf"],
     "Modern": ["Poppins.ttf"],
     "Classic": ["Merriweather.ttf"],
     "Bold": ["Montserrat.ttf"],
@@ -262,13 +264,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if enable_karaoke:
             parts = []
             cursor = c_start
+            force_upper = bool(style.get("uppercase", False)) or typography in ("GardenResolve", "Condensed")
             for w in chunk:
                 w_start = max(cursor, float(w["start"]) - start_sec)
                 w_end = max(w_start + 0.08, float(w["end"]) - start_sec)
                 gap_cs = max(0, int(round((w_start - cursor) * 100)))
                 dur_cs = max(8, int(round((w_end - w_start) * 100)))
                 clean_tok = str(w["word"]).replace("{", "").replace("}", "").replace("\\", "")
-                if typography == "GardenResolve":
+                if force_upper:
                     clean_tok = clean_tok.upper()
                 if gap_cs > 0:
                     parts.append(f"{{\\kf{gap_cs}}}{{\\kf{dur_cs}}}{clean_tok}")
@@ -277,8 +280,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 cursor = w_end
             text_line = " ".join(parts)
         else:
+            force_upper = bool(style.get("uppercase", False)) or typography in ("GardenResolve", "Condensed")
             raw_tokens = [str(w["word"]).replace("{", "").replace("}", "") for w in chunk]
-            if typography == "GardenResolve":
+            if force_upper:
                 raw_tokens = [tok.upper() for tok in raw_tokens]
             text_line = " ".join(raw_tokens)
 
@@ -389,7 +393,7 @@ def build_pillow_overlay_track(
             return
         draw = ImageDraw.Draw(img)
         tokens = [str(w["word"]).strip() for w in chunk_words]
-        if typography == "GardenResolve":
+        if bool(style.get("uppercase", False)) or typography in ("GardenResolve", "Condensed"):
             tokens = [t.upper() for t in tokens]
 
         max_line_w = int(out_w * 0.84)
@@ -519,6 +523,7 @@ def render_clip(args: argparse.Namespace) -> None:
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    show_captions = bool(style.get("showCaptions", True))
     use_ass = ffmpeg_has_ass_filter()
 
     with tempfile.TemporaryDirectory(prefix="ambo_render_") as tmpdir:
@@ -529,7 +534,53 @@ def render_clip(args: argparse.Namespace) -> None:
         else:
             fonts_local.mkdir(exist_ok=True)
 
-        if use_ass:
+        if not show_captions:
+            if has_video and src_w > 0 and src_h > 0:
+                target_ratio = out_w / float(out_h)
+                src_ratio = src_w / float(src_h)
+                if src_ratio > target_ratio:
+                    crop_h = src_h
+                    crop_w = max(2, int(round(src_h * target_ratio)) // 2 * 2)
+                    max_x = max(0, src_w - crop_w)
+                    crop_x = int(max(0, min(max_x, round(center_x * src_w - crop_w / 2.0))))
+                    crop_y = 0
+                else:
+                    crop_w = src_w
+                    crop_h = max(2, int(round(src_w / target_ratio)) // 2 * 2)
+                    crop_x = 0
+                    crop_y = max(0, (src_h - crop_h) // 2)
+
+                vf = f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},scale={out_w}:{out_h}:flags=lanczos"
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{start_sec:.3f}",
+                    "-t", f"{duration_sec:.3f}",
+                    "-i", str(Path(args.input).resolve()),
+                    "-vf", vf,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+                    str(out_path.resolve()),
+                ]
+            else:
+                wave_h = max(180, int(out_h * 0.16))
+                wave_y = int(out_h * 0.42)
+                fc = (
+                    f"color=c=#1D3519:s={out_w}x{out_h}:r=30:d={duration_sec:.3f}[bg];"
+                    f"[0:a]showwaves=s={out_w}x{wave_h}:mode=cline:colors=#BDD630|#F4F2E6:rate=30[waves];"
+                    f"[bg][waves]overlay=0:{wave_y}:shortest=1[v]"
+                )
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-ss", f"{start_sec:.3f}",
+                    "-t", f"{duration_sec:.3f}",
+                    "-i", str(Path(args.input).resolve()),
+                    "-filter_complex", fc,
+                    "-map", "[v]", "-map", "0:a",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "21", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart",
+                    str(out_path.resolve()),
+                ]
+        elif use_ass:
             ass_file = tmp / "captions.ass"
             build_ass_file(ass_file, words, style, start_sec, end_sec, out_w, out_h)
 

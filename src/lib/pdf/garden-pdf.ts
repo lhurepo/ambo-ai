@@ -1,6 +1,13 @@
 import fs from "fs";
 import path from "path";
 import PDFDocument from "pdfkit";
+import {
+  DEFAULT_PDF_DESIGN,
+  type PdfDensity,
+  type PdfDesignSpec,
+  type PdfFontPairing,
+  type PdfHeaderStyle,
+} from "@/lib/types";
 
 export interface GardenPdfSection {
   title: string;
@@ -15,17 +22,8 @@ export interface GardenPdfInput {
   documentTitle?: string;
   sections: GardenPdfSection[];
   includeNoteLines?: boolean;
+  design?: Partial<PdfDesignSpec>;
 }
-
-const GARDEN = {
-  light: "#FFFFFF",
-  vine: "#BDD630",
-  soil: "#121413",
-  dew: "#F4F2E6",
-  root: "#1D3519",
-  muted: "#576258",
-  rule: "#DFDCD0",
-};
 
 const FONTS_DIR = path.join(process.cwd(), "data", "fonts");
 const LOGO_PRIMARY_LIGHT = path.join(
@@ -34,6 +32,13 @@ const LOGO_PRIMARY_LIGHT = path.join(
   "brand",
   "garden",
   "logo-primary-light.png"
+);
+const LOGO_PRIMARY_DARK = path.join(
+  process.cwd(),
+  "public",
+  "brand",
+  "garden",
+  "logo-primary-dark.png"
 );
 const LOGO_MARK_DARK = path.join(
   process.cwd(),
@@ -44,6 +49,15 @@ const LOGO_MARK_DARK = path.join(
 );
 
 type InlineSpan = { text: string; font: string };
+
+function isHexLight(hex: string): boolean {
+  const c = (hex || "#FFFFFF").replace("#", "");
+  if (c.length !== 6) return false;
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 155;
+}
 
 function stripMarkdown(line: string): string {
   return line
@@ -127,10 +141,12 @@ function drawCenteredCircleNumber(
   radius: number,
   num: string,
   fontName: string,
-  fontSize: number
+  fontSize: number,
+  circleColor: string,
+  textColor: string
 ) {
-  doc.circle(cx, cy, radius).fill(GARDEN.root);
-  doc.fillColor(GARDEN.vine).font(fontName).fontSize(fontSize);
+  doc.circle(cx, cy, radius).fill(circleColor);
+  doc.fillColor(textColor).font(fontName).fontSize(fontSize);
 
   const fontObj = (
     doc as unknown as {
@@ -177,11 +193,129 @@ function isRedundantSectionHeading(headingText: string, sectionTitle: string): b
   return genericPrefixes.some((p) => h.startsWith(p));
 }
 
+function mergeDesign(override?: Partial<PdfDesignSpec>): PdfDesignSpec {
+  return {
+    ...DEFAULT_PDF_DESIGN,
+    ...(override || {}),
+    palette: {
+      ...DEFAULT_PDF_DESIGN.palette,
+      ...(override?.palette || {}),
+    },
+  };
+}
+
+function registerPairingFonts(doc: PDFKit.PDFDocument, pairing: PdfFontPairing) {
+  const regIfExists = (name: string, file: string): boolean => {
+    const full = path.join(FONTS_DIR, file);
+    if (fs.existsSync(full)) {
+      doc.registerFont(name, full);
+      return true;
+    }
+    return false;
+  };
+
+  // Always keep Yankee semi/med/italic available as clean fallbacks
+  const hasYankeeExtraBold = regIfExists("YankeeExtraBold", "Yankee-ExtraBold.otf");
+  const hasYankeeBold = regIfExists("YankeeBold", "Yankee-Bold.otf");
+  const hasYankeeBoldIt = regIfExists("YankeeBoldIt", "Yankee-BoldIt.otf");
+  const hasYankeeSemi = regIfExists("YankeeSemi", "Yankee-SemiBold.otf");
+  const hasYankeeMed = regIfExists("YankeeMed", "Yankee-Medium.otf");
+  const hasYankeeReg = regIfExists("YankeeReg", "Yankee-Regular.otf");
+  const hasYankeeIt = regIfExists("YankeeIt", "Yankee-RegularIt.otf");
+
+  const hasJakartaReg = regIfExists("JakartaReg", "PlusJakartaSans-Regular.ttf");
+  const hasJakartaMed = regIfExists("JakartaMed", "PlusJakartaSans-Medium.ttf");
+  const hasJakartaSemi = regIfExists("JakartaSemi", "PlusJakartaSans-SemiBold.ttf");
+  const hasJakartaBold = regIfExists("JakartaBold", "PlusJakartaSans-Bold.ttf");
+
+  const hasMerriweather = regIfExists("MerriweatherBold", "Merriweather.ttf");
+  const hasBaskerville = regIfExists("BaskervilleBold", "LibreBaskerville.ttf");
+
+  const yBold = hasYankeeBold ? "YankeeBold" : "Helvetica-Bold";
+  const yDisp = hasYankeeExtraBold ? "YankeeExtraBold" : yBold;
+  const ySemi = hasYankeeSemi ? "YankeeSemi" : yBold;
+  const yReg = hasYankeeReg ? "YankeeReg" : "Helvetica";
+  const yMed = hasYankeeMed ? "YankeeMed" : yReg;
+  const yIt = hasYankeeIt ? "YankeeIt" : "Helvetica-Oblique";
+  const yBoldIt = hasYankeeBoldIt ? "YankeeBoldIt" : "Helvetica-BoldOblique";
+
+  if (pairing === "editorial" && hasMerriweather) {
+    return {
+      FONT_DISPLAY: "MerriweatherBold",
+      FONT_BOLD: yBold,
+      FONT_BOLD_IT: yBoldIt,
+      FONT_SEMI: ySemi,
+      FONT_MED: yMed,
+      FONT_REG: yReg,
+      FONT_ITALIC: yIt,
+    };
+  }
+
+  if (pairing === "classic" && hasBaskerville) {
+    return {
+      FONT_DISPLAY: "BaskervilleBold",
+      FONT_BOLD: "BaskervilleBold",
+      FONT_BOLD_IT: yBoldIt,
+      FONT_SEMI: ySemi,
+      FONT_MED: yReg,
+      FONT_REG: yReg,
+      FONT_ITALIC: yIt,
+    };
+  }
+
+  if (pairing === "modern" && hasJakartaReg && hasJakartaBold) {
+    return {
+      FONT_DISPLAY: "JakartaBold",
+      FONT_BOLD: "JakartaBold",
+      FONT_BOLD_IT: yBoldIt,
+      FONT_SEMI: hasJakartaSemi ? "JakartaSemi" : "JakartaBold",
+      FONT_MED: hasJakartaMed ? "JakartaMed" : "JakartaReg",
+      FONT_REG: "JakartaReg",
+      FONT_ITALIC: yIt,
+    };
+  }
+
+  // Default: "garden" (Official Garden Church Yankee family)
+  return {
+    FONT_DISPLAY: yDisp,
+    FONT_BOLD: yBold,
+    FONT_BOLD_IT: yBoldIt,
+    FONT_SEMI: ySemi,
+    FONT_MED: yMed,
+    FONT_REG: yReg,
+    FONT_ITALIC: yIt,
+  };
+}
+
 export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buffer> {
+  const design = mergeDesign(input.design);
+  const { palette } = design;
+  const COLORS = {
+    light: "#FFFFFF",
+    primary: palette.primaryHex || "#1D3519",
+    accent: palette.accentHex || "#BDD630",
+    surface: palette.surfaceHex || "#F4F2E6",
+    headerBg: palette.headerBgHex || palette.primaryHex || "#1D3519",
+    headerText: palette.headerTextHex || "#FFFFFF",
+    soil: "#121413",
+    muted: "#576258",
+    rule: "#DFDCD0",
+  };
+
+  const densityMap: Record<
+    PdfDensity,
+    { marginX: number; bodySize: number; lineGap: number; secGap: number; itemGap: number }
+  > = {
+    compact: { marginX: 46, bodySize: 9.5, lineGap: 2.6, secGap: 9, itemGap: 3.5 },
+    comfortable: { marginX: 56, bodySize: 10.5, lineGap: 3.5, secGap: 12, itemGap: 5 },
+    spacious: { marginX: 56, bodySize: 11.5, lineGap: 4.5, secGap: 15, itemGap: 6.5 },
+  };
+  const dSpec = densityMap[design.density] || densityMap.comfortable;
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: "LETTER",
-      margins: { top: 56, bottom: 48, left: 56, right: 56 },
+      margins: { top: 52, bottom: 48, left: dSpec.marginX, right: dSpec.marginX },
       bufferPages: true,
       info: {
         Title: `${input.sermonTitle} — The Garden Church`,
@@ -196,166 +330,265 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    // Register official Garden Church Yankee font family (readable across uppercase headings & body)
-    const yankeeExtraBold = path.join(FONTS_DIR, "Yankee-ExtraBold.otf");
-    const yankeeBold = path.join(FONTS_DIR, "Yankee-Bold.otf");
-    const yankeeBoldIt = path.join(FONTS_DIR, "Yankee-BoldIt.otf");
-    const yankeeSemi = path.join(FONTS_DIR, "Yankee-SemiBold.otf");
-    const yankeeMed = path.join(FONTS_DIR, "Yankee-Medium.otf");
-    const yankeeReg = path.join(FONTS_DIR, "Yankee-Regular.otf");
-    const yankeeIt = path.join(FONTS_DIR, "Yankee-RegularIt.otf");
-
-    const hasExtraBold = fs.existsSync(yankeeExtraBold);
-    const hasBold = fs.existsSync(yankeeBold);
-    const hasBoldIt = fs.existsSync(yankeeBoldIt);
-    const hasSemi = fs.existsSync(yankeeSemi);
-    const hasMed = fs.existsSync(yankeeMed);
-    const hasReg = fs.existsSync(yankeeReg);
-    const hasIt = fs.existsSync(yankeeIt);
-
-    if (hasExtraBold) doc.registerFont("GardenDisplay", yankeeExtraBold);
-    if (hasBold) doc.registerFont("GardenBold", yankeeBold);
-    if (hasBoldIt) doc.registerFont("GardenBoldIt", yankeeBoldIt);
-    if (hasSemi) doc.registerFont("GardenSemi", yankeeSemi);
-    if (hasMed) doc.registerFont("GardenMed", yankeeMed);
-    if (hasReg) doc.registerFont("GardenReg", yankeeReg);
-    if (hasIt) doc.registerFont("GardenItalic", yankeeIt);
-
-    const FONT_BOLD = hasBold ? "GardenBold" : "Helvetica-Bold";
-    const FONT_DISPLAY = hasExtraBold ? "GardenDisplay" : FONT_BOLD;
-    const FONT_BOLD_IT = hasBoldIt ? "GardenBoldIt" : "Helvetica-BoldOblique";
-    const FONT_SEMI = hasSemi ? "GardenSemi" : FONT_BOLD;
-    const FONT_REG = hasReg ? "GardenReg" : "Helvetica";
-    const FONT_MED = hasMed ? "GardenMed" : FONT_REG;
-    const FONT_ITALIC = hasIt ? "GardenItalic" : "Helvetica-Oblique";
+    const fonts = registerPairingFonts(doc, design.fontPairing);
+    const { FONT_DISPLAY, FONT_BOLD, FONT_BOLD_IT, FONT_SEMI, FONT_MED, FONT_REG, FONT_ITALIC } =
+      fonts;
 
     const pageW = doc.page.width; // 612
-    const marginL = 56;
-    const marginR = 56;
-    const contentW = pageW - marginL - marginR; // 500
-    const maxY = doc.page.height - 76; // 716 (safely above page.maxY() = 744)
+    const marginL = dSpec.marginX;
+    const marginR = dSpec.marginX;
+    const contentW = pageW - marginL - marginR;
+    const maxY = doc.page.height - 76; // 716 (safely above page.maxY())
 
     const ensureSpace = (needed: number) => {
       const clamped = Math.min(needed, maxY - 90);
       if (doc.y + clamped > maxY) {
         doc.addPage();
-        doc.y = 56;
+        doc.y = 52;
       }
     };
 
-    // === HERO HEADER BANNER (Page 1) ===
-    const bannerPadTop = 34;
-    const bannerPadBottom = 32;
-    const logoW = 96;
-    const logoH = logoW * (451 / 854); // ~50.7pt aspect-preserving height
-    const logoGap = 28;
-    const headerTextW = contentW - logoW - logoGap;
-
+    // === HEADER RENDERING (4 Styles) ===
     const cleanSubtitle = (input.documentTitle || "SERMON RESOURCES & DISCUSSION GUIDE")
       .replace(/\s*[—–-]\s*The Garden Church\s*$/i, "")
       .trim()
       .toUpperCase();
-    const cleanTitle = (input.sermonTitle || "Sermon Notes").trim().toUpperCase();
-    const titleSize = cleanTitle.length > 70 ? 15.5 : cleanTitle.length > 45 ? 18 : 20.5;
+    const rawTitle = (input.sermonTitle || "Sermon Notes").trim();
+    const displayTitle = design.uppercaseHeadings ? rawTitle.toUpperCase() : rawTitle;
+    const titleSize =
+      displayTitle.length > 70 ? 15.5 : displayTitle.length > 45 ? 18 : 20.5;
 
-    const metaParts = [
-      input.speaker?.trim(),
-      input.dateLabel?.trim(),
-      input.topic?.trim(),
-    ].filter(Boolean);
+    const metaParts = design.showMetadata
+      ? [input.speaker?.trim(), input.dateLabel?.trim(), input.topic?.trim()].filter(Boolean)
+      : [];
     const metaStr = metaParts.join("   ·   ");
 
-    doc.font(FONT_SEMI).fontSize(8.5);
-    const subtitleH = doc.heightOfString(cleanSubtitle, {
-      width: headerTextW,
-      characterSpacing: 1.2,
-    });
+    const headerStyle: PdfHeaderStyle = design.headerStyle || "banner";
+    const lightHeaderBg = isHexLight(COLORS.headerBg);
+    const logoForDark = fs.existsSync(LOGO_PRIMARY_LIGHT) ? LOGO_PRIMARY_LIGHT : null;
+    const logoForLight = fs.existsSync(LOGO_PRIMARY_DARK)
+      ? LOGO_PRIMARY_DARK
+      : fs.existsSync(LOGO_MARK_DARK)
+        ? LOGO_MARK_DARK
+        : null;
 
-    doc.font(FONT_DISPLAY).fontSize(titleSize);
-    const titleH = doc.heightOfString(cleanTitle, {
-      width: headerTextW,
-      characterSpacing: 0.25,
-      lineGap: 2.5,
-    });
+    if (headerStyle === "minimal") {
+      const topY = 40;
+      const logoW = design.showLogo && logoForLight ? 78 : 0;
+      const textW = logoW ? contentW - logoW - 20 : contentW;
 
-    let metaH = 0;
-    if (metaStr) {
-      doc.font(FONT_MED).fontSize(9.5);
-      metaH = doc.heightOfString(metaStr, {
-        width: headerTextW,
-        lineGap: 2,
+      doc.font(FONT_SEMI).fontSize(8.5);
+      const subH = doc.heightOfString(cleanSubtitle, { width: textW, characterSpacing: 1.2 });
+      doc.font(FONT_DISPLAY).fontSize(titleSize);
+      const tH = doc.heightOfString(displayTitle, { width: textW, lineGap: 2.5 });
+
+      doc
+        .fillColor(COLORS.primary)
+        .font(FONT_SEMI)
+        .fontSize(8.5)
+        .text(cleanSubtitle, marginL, topY, { width: textW, characterSpacing: 1.2 });
+
+      doc
+        .fillColor(COLORS.soil)
+        .font(FONT_DISPLAY)
+        .fontSize(titleSize)
+        .text(displayTitle, marginL, topY + subH + 5, { width: textW, lineGap: 2.5 });
+
+      let bottomY = topY + subH + 5 + tH;
+      if (metaStr) {
+        doc.font(FONT_MED).fontSize(9.5);
+        const mH = doc.heightOfString(metaStr, { width: textW });
+        doc
+          .fillColor(COLORS.muted)
+          .font(FONT_MED)
+          .fontSize(9.5)
+          .text(metaStr, marginL, bottomY + 6, { width: textW });
+        bottomY += 6 + mH;
+      }
+
+      if (design.showLogo && logoForLight) {
+        doc.image(logoForLight, pageW - marginR - logoW, topY + 2, { width: logoW });
+      }
+
+      const ruleY = Math.max(bottomY + 14, topY + (logoW ? 48 : 0));
+      doc
+        .moveTo(marginL, ruleY)
+        .lineTo(pageW - marginR, ruleY)
+        .lineWidth(2.2)
+        .strokeColor(COLORS.accent)
+        .stroke();
+      doc.y = ruleY + 18;
+    } else if (headerStyle === "centered") {
+      let curY = 40;
+      if (design.showLogo && logoForLight) {
+        const lw = 76;
+        doc.image(logoForLight, (pageW - lw) / 2, curY, { width: lw });
+        curY += 44;
+      }
+      doc.font(FONT_SEMI).fontSize(8.5);
+      const subH = doc.heightOfString(cleanSubtitle, {
+        width: contentW,
+        align: "center",
+        characterSpacing: 1.4,
       });
-    }
+      doc
+        .fillColor(COLORS.primary)
+        .font(FONT_SEMI)
+        .fontSize(8.5)
+        .text(cleanSubtitle, marginL, curY, {
+          width: contentW,
+          align: "center",
+          characterSpacing: 1.4,
+        });
+      curY += subH + 5;
 
-    const textBlockH = subtitleH + 7 + titleH + (metaStr ? 9 + metaH : 0);
-    const innerH = Math.max(textBlockH, logoH);
-    const bannerH = Math.round(bannerPadTop + innerH + bannerPadBottom);
+      doc.font(FONT_DISPLAY).fontSize(titleSize);
+      const tH = doc.heightOfString(displayTitle, {
+        width: contentW,
+        align: "center",
+        lineGap: 2.5,
+      });
+      doc
+        .fillColor(COLORS.soil)
+        .font(FONT_DISPLAY)
+        .fontSize(titleSize)
+        .text(displayTitle, marginL, curY, {
+          width: contentW,
+          align: "center",
+          lineGap: 2.5,
+        });
+      curY += tH;
 
-    doc.rect(0, 0, pageW, bannerH).fill(GARDEN.root);
-    doc.rect(0, bannerH, pageW, 4).fill(GARDEN.vine);
+      if (metaStr) {
+        doc.font(FONT_MED).fontSize(9.5);
+        const mH = doc.heightOfString(metaStr, { width: contentW, align: "center" });
+        doc
+          .fillColor(COLORS.muted)
+          .font(FONT_MED)
+          .fontSize(9.5)
+          .text(metaStr, marginL, curY + 6, { width: contentW, align: "center" });
+        curY += 6 + mH;
+      }
 
-    if (fs.existsSync(LOGO_PRIMARY_LIGHT)) {
-      const logoY = bannerPadTop + (innerH - logoH) / 2;
-      doc.image(LOGO_PRIMARY_LIGHT, pageW - marginR - logoW, logoY, { width: logoW });
-    }
+      curY += 14;
+      doc
+        .moveTo(marginL + 40, curY)
+        .lineTo(pageW - marginR - 40, curY)
+        .lineWidth(1.5)
+        .strokeColor(COLORS.accent)
+        .stroke();
+      doc.y = curY + 18;
+    } else {
+      // "banner" (full bleed) or "boxed" (inset rounded card)
+      const isBoxed = headerStyle === "boxed";
+      const boxX = isBoxed ? marginL : 0;
+      const boxY = isBoxed ? 36 : 0;
+      const boxW = isBoxed ? contentW : pageW;
+      const textX = isBoxed ? marginL + 24 : marginL;
+      const padTop = isBoxed ? 22 : 34;
+      const padBottom = isBoxed ? 22 : 32;
+      const logoW = design.showLogo ? 92 : 0;
+      const logoH = logoW ? logoW * (451 / 854) : 0;
+      const logoGap = logoW ? 24 : 0;
+      const headerTextW = (isBoxed ? contentW - 48 : contentW) - logoW - logoGap;
 
-    const textStartY = bannerPadTop + (innerH - textBlockH) / 2;
-    doc
-      .fillColor(GARDEN.vine)
-      .font(FONT_SEMI)
-      .fontSize(8.5)
-      .text(cleanSubtitle, marginL, textStartY, {
+      doc.font(FONT_SEMI).fontSize(8.5);
+      const subtitleH = doc.heightOfString(cleanSubtitle, {
         width: headerTextW,
         characterSpacing: 1.2,
       });
 
-    doc
-      .fillColor(GARDEN.light)
-      .font(FONT_DISPLAY)
-      .fontSize(titleSize)
-      .text(cleanTitle, marginL, textStartY + subtitleH + 7, {
+      doc.font(FONT_DISPLAY).fontSize(titleSize);
+      const titleH = doc.heightOfString(displayTitle, {
         width: headerTextW,
         characterSpacing: 0.25,
         lineGap: 2.5,
       });
 
-    if (metaStr) {
-      doc
-        .fillColor(GARDEN.dew)
-        .font(FONT_MED)
-        .fontSize(9.5)
-        .text(metaStr, marginL, textStartY + subtitleH + 7 + titleH + 9, {
-          width: headerTextW,
-          lineGap: 2,
-        });
-    }
+      let metaH = 0;
+      if (metaStr) {
+        doc.font(FONT_MED).fontSize(9.5);
+        metaH = doc.heightOfString(metaStr, { width: headerTextW, lineGap: 2 });
+      }
 
-    doc.y = bannerH + 4 + 26;
+      const textBlockH = subtitleH + 7 + titleH + (metaStr ? 9 + metaH : 0);
+      const innerH = Math.max(textBlockH, logoH);
+      const bannerH = Math.round(padTop + innerH + padBottom);
+
+      if (isBoxed) {
+        doc.roundedRect(boxX, boxY, boxW, bannerH, 10).fill(COLORS.headerBg);
+        doc.rect(boxX, boxY + bannerH - 4, boxW, 4).fill(COLORS.accent);
+      } else {
+        doc.rect(0, 0, pageW, bannerH).fill(COLORS.headerBg);
+        doc.rect(0, bannerH, pageW, 4).fill(COLORS.accent);
+      }
+
+      const chosenLogo = lightHeaderBg ? logoForLight : logoForDark;
+      if (design.showLogo && chosenLogo) {
+        const logoY = boxY + padTop + (innerH - logoH) / 2;
+        const logoX = isBoxed ? boxX + boxW - 24 - logoW : pageW - marginR - logoW;
+        doc.image(chosenLogo, logoX, logoY, { width: logoW });
+      }
+
+      const textStartY = boxY + padTop + (innerH - textBlockH) / 2;
+      doc
+        .fillColor(lightHeaderBg ? COLORS.primary : COLORS.accent)
+        .font(FONT_SEMI)
+        .fontSize(8.5)
+        .text(cleanSubtitle, textX, textStartY, {
+          width: headerTextW,
+          characterSpacing: 1.2,
+        });
+
+      doc
+        .fillColor(COLORS.headerText)
+        .font(FONT_DISPLAY)
+        .fontSize(titleSize)
+        .text(displayTitle, textX, textStartY + subtitleH + 7, {
+          width: headerTextW,
+          characterSpacing: 0.25,
+          lineGap: 2.5,
+        });
+
+      if (metaStr) {
+        doc
+          .fillColor(lightHeaderBg ? COLORS.muted : COLORS.surface)
+          .font(FONT_MED)
+          .fontSize(9.5)
+          .text(metaStr, textX, textStartY + subtitleH + 7 + titleH + 9, {
+            width: headerTextW,
+            lineGap: 2,
+          });
+      }
+
+      doc.y = boxY + bannerH + (isBoxed ? 22 : 28);
+    }
 
     // === RENDER SECTIONS ===
     input.sections.forEach((sec, sIdx) => {
       if (sIdx > 0) {
-        doc.y += 12;
+        doc.y += dSpec.secGap;
       }
-      ensureSpace(120);
+      ensureSpace(115);
 
       const headingY = doc.y;
-      doc.roundedRect(marginL, headingY + 3.2, 4.5, 11, 2).fill(GARDEN.vine);
+      const secHeading = design.uppercaseHeadings ? sec.title.toUpperCase() : sec.title;
+      doc.roundedRect(marginL, headingY + 3.2, 4.5, 11, 2).fill(COLORS.accent);
       doc
-        .fillColor(GARDEN.root)
+        .fillColor(COLORS.primary)
         .font(FONT_DISPLAY)
         .fontSize(12.5)
-        .text(sec.title.toUpperCase(), marginL + 13, headingY, {
+        .text(secHeading, marginL + 13, headingY, {
           width: contentW - 13,
-          characterSpacing: 0.5,
+          characterSpacing: design.uppercaseHeadings ? 0.5 : 0.1,
         });
       doc
         .moveTo(marginL, doc.y + 4)
         .lineTo(pageW - marginR, doc.y + 4)
         .lineWidth(0.75)
-        .strokeColor(GARDEN.rule)
+        .strokeColor(COLORS.rule)
         .stroke();
-      doc.y += 11;
+      doc.y += 10;
 
       const lines = (sec.content || "").replace(/\r\n/g, "\n").split("\n");
       let i = 0;
@@ -364,15 +597,61 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
       while (i < lines.length) {
         const rawLine = lines[i].trim();
         if (!rawLine) {
-          if (seenContentLine) doc.y += 4;
+          if (seenContentLine) doc.y += 3.5;
           i += 1;
           continue;
         }
 
-        // Skip horizontal rules `---`
         if (/^[-*_]{3,}$/.test(rawLine)) {
           doc.y += 3;
           i += 1;
+          continue;
+        }
+
+        // Callout card: :::callout Optional Title ... :::
+        if (rawLine.startsWith(":::callout")) {
+          seenContentLine = true;
+          const calloutTitle = rawLine.replace(/^:::callout\s*/i, "").trim();
+          const bodyLines: string[] = [];
+          i += 1;
+          while (i < lines.length && !lines[i].trim().startsWith(":::")) {
+            const cl = lines[i].trim();
+            if (cl) bodyLines.push(cl);
+            i += 1;
+          }
+          if (i < lines.length && lines[i].trim().startsWith(":::")) i += 1;
+
+          const bodyText = bodyLines.join(" ");
+          doc.font(FONT_MED).fontSize(dSpec.bodySize);
+          const bodyH = doc.heightOfString(stripMarkdown(bodyText), {
+            width: contentW - 28,
+            lineGap: dSpec.lineGap,
+          });
+          const titleH = calloutTitle ? 15 : 0;
+          const boxH = titleH + bodyH + 18;
+          ensureSpace(boxH + 8);
+          const boxY = doc.y;
+          doc.roundedRect(marginL, boxY, contentW, boxH, 6).fill(COLORS.surface);
+          doc.rect(marginL, boxY, 4, boxH).fill(COLORS.accent);
+          let innerY = boxY + 9;
+          if (calloutTitle) {
+            doc
+              .fillColor(COLORS.primary)
+              .font(FONT_BOLD)
+              .fontSize(dSpec.bodySize)
+              .text(calloutTitle, marginL + 16, innerY, { width: contentW - 28 });
+            innerY = doc.y + 3;
+          }
+          doc.y = innerY;
+          writeRichLine(doc, bodyText, marginL + 16, contentW - 28, {
+            size: dSpec.bodySize,
+            color: COLORS.soil,
+            baseFont: FONT_MED,
+            boldFont: FONT_BOLD,
+            italicFont: FONT_ITALIC,
+            lineGap: dSpec.lineGap,
+          });
+          doc.y = Math.max(doc.y + 4, boxY + boxH + 7);
           continue;
         }
 
@@ -385,15 +664,15 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
             continue;
           }
           seenContentLine = true;
-          ensureSpace(34);
+          ensureSpace(32);
           const level = hMatch[1].length;
           doc.y += 4;
           doc
-            .fillColor(GARDEN.root)
+            .fillColor(COLORS.primary)
             .font(level <= 2 ? FONT_BOLD : FONT_SEMI)
-            .fontSize(level === 1 ? 12.5 : level === 2 ? 11.5 : 10.5)
+            .fontSize(level === 1 ? 12.5 : level === 2 ? 11.2 : 10.2)
             .text(cleanHeading, marginL, doc.y, { width: contentW });
-          doc.y += 3;
+          doc.y += 2.5;
           i += 1;
           continue;
         }
@@ -408,24 +687,24 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
             i += 1;
           }
           const qText = quoteLines.join(" ");
-          doc.font(FONT_ITALIC).fontSize(10.5);
+          doc.font(FONT_ITALIC).fontSize(dSpec.bodySize);
           const measuredH = doc.heightOfString(stripMarkdown(qText), {
             width: contentW - 28,
-            lineGap: 3.5,
+            lineGap: dSpec.lineGap,
           });
           const boxH = measuredH + 18;
           ensureSpace(boxH + 8);
           const boxY = doc.y;
-          doc.roundedRect(marginL, boxY, contentW, boxH, 6).fill(GARDEN.dew);
-          doc.rect(marginL, boxY, 4, boxH).fill(GARDEN.vine);
+          doc.roundedRect(marginL, boxY, contentW, boxH, 6).fill(COLORS.surface);
+          doc.rect(marginL, boxY, 4, boxH).fill(COLORS.accent);
           doc.y = boxY + 9;
           writeRichLine(doc, qText, marginL + 16, contentW - 28, {
-            size: 10.5,
-            color: GARDEN.root,
+            size: dSpec.bodySize,
+            color: COLORS.primary,
             baseFont: FONT_ITALIC,
             boldFont: FONT_BOLD_IT,
             italicFont: FONT_ITALIC,
-            lineGap: 3.5,
+            lineGap: dSpec.lineGap,
           });
           doc.y = Math.max(doc.y + 4, boxY + boxH + 7);
           continue;
@@ -436,34 +715,45 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         if (numMatch) {
           const num = numMatch[1];
           const itemText = numMatch[2];
-          doc.font(FONT_MED).fontSize(10.5);
+          doc.font(FONT_MED).fontSize(dSpec.bodySize);
+          const textIndent = design.showBadgeNumbers ? 26 : 16;
           const estH = doc.heightOfString(stripMarkdown(itemText), {
-            width: contentW - 26,
-            lineGap: 3.5,
+            width: contentW - textIndent,
+            lineGap: dSpec.lineGap,
           });
           ensureSpace(estH + 8);
           const rowY = doc.y;
 
-          drawCenteredCircleNumber(
-            doc,
-            marginL + 9,
-            rowY + 7.35,
-            9,
-            num,
-            FONT_BOLD,
-            num.length >= 2 ? 7.8 : 8.5
-          );
+          if (design.showBadgeNumbers) {
+            drawCenteredCircleNumber(
+              doc,
+              marginL + 9,
+              rowY + dSpec.bodySize * 0.7,
+              9,
+              num,
+              FONT_BOLD,
+              num.length >= 2 ? 7.8 : 8.5,
+              COLORS.primary,
+              COLORS.accent
+            );
+          } else {
+            doc
+              .fillColor(COLORS.primary)
+              .font(FONT_BOLD)
+              .fontSize(dSpec.bodySize)
+              .text(`${num}.`, marginL, rowY, { lineBreak: false });
+          }
 
           doc.y = rowY;
-          writeRichLine(doc, itemText, marginL + 26, contentW - 26, {
-            size: 10.5,
-            color: GARDEN.soil,
+          writeRichLine(doc, itemText, marginL + textIndent, contentW - textIndent, {
+            size: dSpec.bodySize,
+            color: COLORS.soil,
             baseFont: FONT_MED,
             boldFont: FONT_BOLD,
             italicFont: FONT_ITALIC,
-            lineGap: 3.5,
+            lineGap: dSpec.lineGap,
           });
-          doc.y = Math.max(doc.y + 5, rowY + 19);
+          doc.y = Math.max(doc.y + dSpec.itemGap, rowY + 19);
           i += 1;
           continue;
         }
@@ -472,66 +762,71 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         const bulletMatch = rawLine.match(/^[-*•]\s+(.+)$/);
         if (bulletMatch) {
           const itemText = bulletMatch[1];
-          doc.font(FONT_REG).fontSize(10.5);
+          doc.font(FONT_REG).fontSize(dSpec.bodySize);
           const estH = doc.heightOfString(stripMarkdown(itemText), {
             width: contentW - 16,
-            lineGap: 3.5,
+            lineGap: dSpec.lineGap,
           });
           ensureSpace(estH + 6);
           const rowY = doc.y;
-          doc.circle(marginL + 5, rowY + 7.35, 2.5).fill(GARDEN.vine);
+          doc.circle(marginL + 5, rowY + dSpec.bodySize * 0.7, 2.5).fill(COLORS.accent);
           doc.y = rowY;
           writeRichLine(doc, itemText, marginL + 16, contentW - 16, {
-            size: 10.5,
-            color: GARDEN.soil,
+            size: dSpec.bodySize,
+            color: COLORS.soil,
             baseFont: FONT_REG,
             boldFont: FONT_BOLD,
             italicFont: FONT_ITALIC,
-            lineGap: 3.5,
+            lineGap: dSpec.lineGap,
           });
-          doc.y += 4;
+          doc.y += dSpec.itemGap - 1;
           i += 1;
           continue;
         }
 
         // Standard paragraph
-        doc.font(FONT_REG).fontSize(10.5);
+        doc.font(FONT_REG).fontSize(dSpec.bodySize);
         const estH = doc.heightOfString(stripMarkdown(rawLine), {
           width: contentW,
-          lineGap: 4,
+          lineGap: dSpec.lineGap + 0.5,
         });
         ensureSpace(estH + 8);
         writeRichLine(doc, rawLine, marginL, contentW, {
-          size: 10.5,
-          color: GARDEN.soil,
+          size: dSpec.bodySize,
+          color: COLORS.soil,
           baseFont: FONT_REG,
           boldFont: FONT_BOLD,
           italicFont: FONT_ITALIC,
-          lineGap: 4,
+          lineGap: dSpec.lineGap + 0.5,
         });
-        doc.y += 5;
+        doc.y += dSpec.itemGap;
         i += 1;
       }
     });
 
-    // === OPTIONAL HANDWRITTEN NOTES LINES FOR GROUP SHARING ===
+    // === OPTIONAL HANDWRITTEN NOTES LINES ===
     if (input.includeNoteLines) {
       if (doc.y > maxY - 110) {
         doc.addPage();
-        doc.y = 56;
+        doc.y = 52;
       } else {
         doc.y += 14;
       }
       const notesY = doc.y;
-      doc.roundedRect(marginL, notesY + 3.2, 4.5, 11, 2).fill(GARDEN.vine);
+      doc.roundedRect(marginL, notesY + 3.2, 4.5, 11, 2).fill(COLORS.accent);
       doc
-        .fillColor(GARDEN.root)
+        .fillColor(COLORS.primary)
         .font(FONT_DISPLAY)
         .fontSize(12.5)
-        .text("NOTES & REFLECTION", marginL + 13, notesY, {
-          width: contentW - 13,
-          characterSpacing: 0.5,
-        });
+        .text(
+          design.uppercaseHeadings ? "NOTES & REFLECTION" : "Notes & Reflection",
+          marginL + 13,
+          notesY,
+          {
+            width: contentW - 13,
+            characterSpacing: design.uppercaseHeadings ? 0.5 : 0.1,
+          }
+        );
       doc.y += 8;
       while (doc.y + 22 <= maxY - 6) {
         doc.y += 22;
@@ -539,7 +834,7 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
           .moveTo(marginL, doc.y)
           .lineTo(pageW - marginR, doc.y)
           .lineWidth(0.6)
-          .strokeColor(GARDEN.rule)
+          .strokeColor(COLORS.rule)
           .stroke();
       }
     }
@@ -551,12 +846,12 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
       const prevBottom = doc.page.margins.bottom;
       doc.page.margins.bottom = 0;
 
-      const footerY = doc.page.height - 42; // 750
+      const footerY = doc.page.height - 42;
       doc
         .moveTo(marginL, footerY - 8)
         .lineTo(pageW - marginR, footerY - 8)
         .lineWidth(0.6)
-        .strokeColor(GARDEN.rule)
+        .strokeColor(COLORS.rule)
         .stroke();
 
       let textX = marginL;
@@ -565,7 +860,7 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         textX = marginL + 17;
       }
       doc
-        .fillColor(GARDEN.root)
+        .fillColor(COLORS.primary)
         .font(FONT_SEMI)
         .fontSize(8)
         .text("THE GARDEN CHURCH  ·  BOSTON", textX, footerY + 1, {
@@ -574,7 +869,7 @@ export async function renderGardenChurchPdf(input: GardenPdfInput): Promise<Buff
         });
 
       const pageStr = `Page ${idx + 1} of ${range.count}`;
-      doc.fillColor(GARDEN.muted).font(FONT_REG).fontSize(8);
+      doc.fillColor(COLORS.muted).font(FONT_REG).fontSize(8);
       const pageStrW = doc.widthOfString(pageStr, { characterSpacing: 0 });
       doc.text(pageStr, pageW - marginR - pageStrW, footerY + 1, {
         lineBreak: false,

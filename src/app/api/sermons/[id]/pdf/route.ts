@@ -2,10 +2,21 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db, ensureDbInitialized } from "@/lib/db";
 import { sermonAssets, sermons } from "@/lib/db/schema";
-import { getCurrentUser } from "@/lib/auth";
+import { ensureUserAiSettings, getCurrentUser } from "@/lib/auth";
 import { renderGardenChurchPdf, type GardenPdfSection } from "@/lib/pdf/garden-pdf";
-import { GENERATION_PROMPT_SLOTS } from "@/lib/ai/default-generation-prompts";
-import { ASSET_TYPES, type AssetType } from "@/lib/types";
+import { designPdfWithAi } from "@/lib/pdf/ai-pdf-designer";
+import {
+  GENERATION_PROMPT_SLOTS,
+  getEffectiveGenerationPrompts,
+} from "@/lib/ai/default-generation-prompts";
+import { saveBufferToExportDir } from "@/lib/local-export";
+import {
+  ASSET_TYPES,
+  DEFAULT_PDF_DESIGN,
+  type AssetType,
+  type LlmProvider,
+  type PdfDesignSpec,
+} from "@/lib/types";
 import { isValidUuid, safeErrorResponse } from "@/lib/security";
 
 export async function POST(
@@ -61,8 +72,9 @@ export async function POST(
       }
     } else {
       const requestedTypes: string[] = Array.isArray(body.assetTypes)
-        ? body.assetTypes.filter((t: unknown): t is string =>
-            typeof t === "string" && ASSET_TYPES.includes(t as AssetType)
+        ? body.assetTypes.filter(
+            (t: unknown): t is string =>
+              typeof t === "string" && ASSET_TYPES.includes(t as AssetType)
           )
         : ["overview", "points", "scripture", "discussion_questions"];
 
@@ -82,6 +94,66 @@ export async function POST(
       );
     }
 
+    const settings = ensureUserAiSettings(user.id);
+    let savedDesign: PdfDesignSpec = DEFAULT_PDF_DESIGN;
+    try {
+      const parsed = JSON.parse(settings.defaultPdfDesignJson || "{}");
+      savedDesign = {
+        ...DEFAULT_PDF_DESIGN,
+        ...parsed,
+        palette: { ...DEFAULT_PDF_DESIGN.palette, ...(parsed.palette || {}) },
+      };
+    } catch {}
+
+    const reqDesign =
+      body.design && typeof body.design === "object"
+        ? (body.design as Partial<PdfDesignSpec>)
+        : {};
+    let activeDesign: PdfDesignSpec = {
+      ...savedDesign,
+      ...reqDesign,
+      palette: { ...savedDesign.palette, ...(reqDesign.palette || {}) },
+    };
+
+    let documentTitle =
+      typeof body.documentTitle === "string" && body.documentTitle.trim()
+        ? body.documentTitle.trim().slice(0, 120)
+        : sections.length === 1
+          ? `${sections[0].title} — The Garden Church`
+          : "Sermon Notes & Discussion Guide";
+
+    let activeSections = sections;
+
+    if (activeDesign.useAiDesigner && settings.llmProvider !== "offline") {
+      const prompts = getEffectiveGenerationPrompts(user.id);
+      const pdfPrompt =
+        typeof body.pdfPrompt === "string" && body.pdfPrompt.trim()
+          ? body.pdfPrompt.trim().slice(0, 4000)
+          : prompts.pdf_design?.promptText || "";
+      const customInstruction =
+        typeof body.customInstruction === "string" && body.customInstruction.trim()
+          ? body.customInstruction.trim().slice(0, 1500)
+          : undefined;
+
+      const aiRes = await designPdfWithAi({
+        sermonTitle: sermon.title,
+        documentTitle,
+        sections,
+        baseDesign: activeDesign,
+        pdfPrompt,
+        customInstruction,
+        config: {
+          provider: (settings.llmProvider as LlmProvider) || "offline",
+          apiKey: settings.decryptedApiKey || "",
+          baseUrl: settings.baseUrl,
+          model: settings.model,
+        },
+      });
+      documentTitle = aiRes.documentTitle;
+      activeDesign = aiRes.design;
+      activeSections = aiRes.sections;
+    }
+
     const dateLabel = new Date(sermon.createdAt).toLocaleDateString("en-US", {
       month: "long",
       day: "numeric",
@@ -90,17 +162,13 @@ export async function POST(
 
     const pdfBuf = await renderGardenChurchPdf({
       sermonTitle: sermon.title,
-      speaker: sermon.speaker || user.fullName || "The Garden Church",
+      speaker: sermon.speaker || settings.defaultSpeaker || user.fullName || "The Garden Church",
       topic: sermon.topic || undefined,
       dateLabel,
-      documentTitle:
-        typeof body.documentTitle === "string" && body.documentTitle.trim()
-          ? body.documentTitle.trim().slice(0, 120)
-          : sections.length === 1
-            ? `${sections[0].title} — The Garden Church`
-            : "Sermon Notes & Discussion Guide",
-      sections,
+      documentTitle,
+      sections: activeSections,
       includeNoteLines: Boolean(body.includeNoteLines),
+      design: activeDesign,
     });
 
     const slug =
@@ -108,13 +176,22 @@ export async function POST(
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)/g, "") || "sermon";
+    const fileName = `${slug}-garden-church.pdf`;
+
+    if (body.saveToDisk === true && settings.pdfExportDir) {
+      const saved = saveBufferToExportDir(settings.pdfExportDir, fileName, pdfBuf);
+      return NextResponse.json({
+        ok: true,
+        ...saved,
+      });
+    }
 
     return new NextResponse(new Uint8Array(pdfBuf), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
         "Content-Length": String(pdfBuf.length),
-        "Content-Disposition": `attachment; filename="${slug}-garden-church.pdf"`,
+        "Content-Disposition": `attachment; filename="${fileName}"`,
         "Cache-Control": "private, no-store",
       },
     });
